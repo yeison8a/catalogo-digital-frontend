@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 
 import { getProductById } from "@/services/productService";
 import { formatCurrency } from "@/lib/formatCurrency";
+import WhatsAppButton from "@/components/products/WhatsAppButton";
 
 interface ProductDetailPageProps {
   params: Promise<{ id: string }>;
@@ -92,10 +93,7 @@ export default async function ProductDetailPage({
           </div>
 
           <div className="mt-auto pt-4">
-            <p className="rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-600">
-              Próximamente podrás consultar este producto
-              directamente por WhatsApp.
-            </p>
+            <WhatsAppButton product={product} />
           </div>
         </div>
       </article>
