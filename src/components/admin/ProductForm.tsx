@@ -94,13 +94,14 @@ export default function ProductForm({
     }
 
     const product: Product = {
-      id: initialProduct?.id ?? crypto.randomUUID(),
-      name,
-      description: form.description.trim(),
-      price,
-      available: form.available,
-      category,
-      mainImageUrl: initialProduct?.mainImageUrl ?? null,
+        id: initialProduct?.id ?? crypto.randomUUID(),
+        name,
+        description: form.description.trim(),
+        price,
+        available: form.available,
+        active: initialProduct?.active ?? true,
+        category,
+        mainImageUrl: initialProduct?.mainImageUrl ?? null,
     };
 
     try {

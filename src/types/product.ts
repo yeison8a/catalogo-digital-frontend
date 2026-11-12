@@ -10,6 +10,7 @@ export interface Product {
   description: string;
   price: number;
   available: boolean;
+  active: boolean;
   category: Category;
   mainImageUrl: string | null;
 }

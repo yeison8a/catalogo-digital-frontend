@@ -7,10 +7,13 @@ import Link from "next/link";
 import type { Product } from "@/types/product";
 import { formatCurrency } from "@/lib/formatCurrency";
 import { normalizeText } from "@/lib/normalizeText";
+
 import {
   useStoredProducts,
   mergeProducts,
 } from "@/lib/productStorage";
+
+import ProductStatusControls from "./ProductStatusControls";
 
 interface AdminProductListProps {
   products: Product[];
@@ -24,27 +27,30 @@ type AvailabilityFilter =
 export default function AdminProductList({
   products,
 }: AdminProductListProps) {
-  // Estado para la búsqueda por nombre
+  // Estado de búsqueda
   const [search, setSearch] = useState("");
 
-  // Estado para el filtro de disponibilidad
+  // Filtro de disponibilidad
   const [availabilityFilter, setAvailabilityFilter] =
     useState<AvailabilityFilter>("all");
 
-  // Productos guardados temporalmente en localStorage
+  // Productos creados o modificados en localStorage
   const storedProducts = useStoredProducts();
 
-  // Combinar los productos iniciales con los registrados
-    const allProducts = mergeProducts(
+  // Combinar originales y locales sin duplicados
+  const allProducts = mergeProducts(
     products,
     storedProducts
-    );
+  );
 
-  // Aplicar búsqueda y filtro de disponibilidad
+  // Normalizar el texto una sola vez
+  const normalizedSearch = normalizeText(search);
+
+  // Aplicar filtros
   const filteredProducts = allProducts.filter((product) => {
     const matchesSearch = normalizeText(
       product.name
-    ).includes(normalizeText(search));
+    ).includes(normalizedSearch);
 
     const matchesAvailability =
       availabilityFilter === "all" ||
@@ -56,12 +62,12 @@ export default function AdminProductList({
     return matchesSearch && matchesAvailability;
   });
 
-  // Comprobar si existen filtros activos
+  // Detectar filtros activos
   const hasActiveFilters =
     search.trim() !== "" ||
     availabilityFilter !== "all";
 
-  // Restablecer los filtros
+  // Limpiar búsqueda y filtros
   function clearFilters() {
     setSearch("");
     setAvailabilityFilter("all");
@@ -69,7 +75,7 @@ export default function AdminProductList({
 
   return (
     <section className="space-y-6">
-      {/* Encabezado y botón para agregar productos */}
+      {/* Encabezado y acción para crear productos */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">
@@ -92,7 +98,7 @@ export default function AdminProductList({
         </Link>
       </div>
 
-      {/* Buscador y filtro de disponibilidad */}
+      {/* Buscador y filtro */}
       <div className="flex flex-col gap-3 sm:flex-row">
         <input
           type="search"
@@ -121,7 +127,7 @@ export default function AdminProductList({
         </select>
       </div>
 
-      {/* Cantidad de resultados y limpieza de filtros */}
+      {/* Contador de resultados y limpiar filtros */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p
           className="text-sm text-slate-500"
@@ -202,8 +208,26 @@ export default function AdminProductList({
                 </span>
               </div>
 
-              {/* Acciones del producto */}
-              <div className="flex items-center gap-2">
+              {/* Controles de estado */}
+              <div className="w-full space-y-3 border-t border-slate-100 pt-3 sm:w-48 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+                <ProductStatusControls product={product} />
+
+                {/* Estado de publicación */}
+                <span
+                  className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${
+                    product.active
+                      ? "bg-blue-50 text-blue-700"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {product.active
+                    ? "Publicado"
+                    : "Oculto"}
+                </span>
+              </div>
+
+              {/* Acciones */}
+              <div className="flex flex-wrap items-center gap-2">
                 <Link
                   href={`/products/${product.id}`}
                   className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
@@ -212,10 +236,10 @@ export default function AdminProductList({
                 </Link>
 
                 <Link
-                    href={`/admin/products/${product.id}/edit`}
-                    className="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                  href={`/admin/products/${product.id}/edit`}
+                  className="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
                 >
-                    Editar
+                  Editar
                 </Link>
               </div>
             </article>
