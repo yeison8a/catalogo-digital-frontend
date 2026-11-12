@@ -1,6 +1,7 @@
 
 import ProductCatalog from "@/components/products/ProductCatalog";
 import { mockProducts } from "@/mocks/products";
+import { mockCategories } from "@/mocks/categories";
 
 export default function HomePage() {
   return (
@@ -33,7 +34,10 @@ export default function HomePage() {
           </p>
         </div>
 
-        <ProductCatalog products={mockProducts} />
+        <ProductCatalog 
+          products={mockProducts} 
+          categories={mockCategories} 
+        />
       </section>
     </div>
   );
