@@ -7,7 +7,10 @@ import Link from "next/link";
 import type { Product } from "@/types/product";
 import { formatCurrency } from "@/lib/formatCurrency";
 import { normalizeText } from "@/lib/normalizeText";
-import { useStoredProducts } from "@/lib/productStorage";
+import {
+  useStoredProducts,
+  mergeProducts,
+} from "@/lib/productStorage";
 
 interface AdminProductListProps {
   products: Product[];
@@ -32,7 +35,10 @@ export default function AdminProductList({
   const storedProducts = useStoredProducts();
 
   // Combinar los productos iniciales con los registrados
-  const allProducts = [...products, ...storedProducts];
+    const allProducts = mergeProducts(
+    products,
+    storedProducts
+    );
 
   // Aplicar búsqueda y filtro de disponibilidad
   const filteredProducts = allProducts.filter((product) => {
@@ -205,14 +211,12 @@ export default function AdminProductList({
                   Ver
                 </Link>
 
-                <button
-                  type="button"
-                  disabled
-                  title="La edición se implementará en el paso 17"
-                  className="min-h-10 cursor-not-allowed rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-400"
+                <Link
+                    href={`/admin/products/${product.id}/edit`}
+                    className="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
                 >
-                  Editar
-                </button>
+                    Editar
+                </Link>
               </div>
             </article>
           ))}

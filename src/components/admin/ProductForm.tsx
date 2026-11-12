@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { useState } from "react";
@@ -10,6 +11,7 @@ import { saveProduct } from "@/lib/productStorage";
 
 interface ProductFormProps {
   categories: Category[];
+  initialProduct?: Product;
 }
 
 interface FormValues {
@@ -22,19 +24,26 @@ interface FormValues {
 
 export default function ProductForm({
   categories,
+  initialProduct,
 }: ProductFormProps) {
   const router = useRouter();
 
+  // Si existe initialProduct, estamos editando
+  const isEditing = Boolean(initialProduct);
+
   const [form, setForm] = useState<FormValues>({
-    name: "",
-    description: "",
-    price: "",
-    categoryId: "",
-    available: true,
+    name: initialProduct?.name ?? "",
+    description: initialProduct?.description ?? "",
+    price: initialProduct
+      ? String(initialProduct.price)
+      : "",
+    categoryId: initialProduct?.category.id ?? "",
+    available: initialProduct?.available ?? true,
   });
 
   const [error, setError] = useState("");
 
+  // Actualizar los valores del formulario
   function updateField<K extends keyof FormValues>(
     field: K,
     value: FormValues[K]
@@ -47,6 +56,7 @@ export default function ProductForm({
     setError("");
   }
 
+  // Procesar creación o edición
   function handleSubmit(
     event: React.SubmitEvent<HTMLFormElement>
   ) {
@@ -84,21 +94,22 @@ export default function ProductForm({
     }
 
     const product: Product = {
-      id: crypto.randomUUID(),
+      id: initialProduct?.id ?? crypto.randomUUID(),
       name,
       description: form.description.trim(),
       price,
       available: form.available,
       category,
-      mainImageUrl: null,
+      mainImageUrl: initialProduct?.mainImageUrl ?? null,
     };
 
     try {
       saveProduct(product);
+
       router.push("/admin/products");
     } catch {
       setError(
-        "No fue posible guardar el producto en este navegador."
+        "No fue posible guardar los cambios."
       );
     }
   }
@@ -110,13 +121,17 @@ export default function ProductForm({
     >
       <div>
         <h2 className="text-xl font-semibold text-slate-900">
-          Información del producto
+          {isEditing
+            ? "Editar información"
+            : "Información del producto"}
         </h2>
+
         <p className="mt-1 text-sm text-slate-500">
           Los campos marcados con * son obligatorios.
         </p>
       </div>
 
+      {/* Nombre */}
       <div className="space-y-2">
         <label
           htmlFor="name"
@@ -140,6 +155,7 @@ export default function ProductForm({
         />
       </div>
 
+      {/* Descripción */}
       <div className="space-y-2">
         <label
           htmlFor="description"
@@ -160,6 +176,7 @@ export default function ProductForm({
         />
       </div>
 
+      {/* Precio */}
       <div className="space-y-2">
         <label
           htmlFor="price"
@@ -184,6 +201,7 @@ export default function ProductForm({
         />
       </div>
 
+      {/* Categoría */}
       <div className="space-y-2">
         <label
           htmlFor="category"
@@ -201,16 +219,22 @@ export default function ProductForm({
           }
           className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary"
         >
-          <option value="">Selecciona una categoría</option>
+          <option value="">
+            Selecciona una categoría
+          </option>
 
           {categories.map((category) => (
-            <option key={category.id} value={category.id}>
+            <option
+              key={category.id}
+              value={category.id}
+            >
               {category.name}
             </option>
           ))}
         </select>
       </div>
 
+      {/* Disponibilidad */}
       <div className="space-y-2">
         <label
           htmlFor="available"
@@ -235,6 +259,7 @@ export default function ProductForm({
         </select>
       </div>
 
+      {/* Error */}
       {error && (
         <p
           role="alert"
@@ -244,6 +269,7 @@ export default function ProductForm({
         </p>
       )}
 
+      {/* Acciones */}
       <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:justify-end">
         <Link
           href="/admin/products"
@@ -256,7 +282,9 @@ export default function ProductForm({
           type="submit"
           className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700"
         >
-          Guardar producto
+          {isEditing
+            ? "Guardar cambios"
+            : "Guardar producto"}
         </button>
       </div>
     </form>
