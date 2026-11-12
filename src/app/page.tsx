@@ -1,4 +1,7 @@
 
+import ProductGrid from "@/components/products/ProductGrid";
+import { mockProducts } from "@/mocks/products";
+
 export default function HomePage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
@@ -13,22 +16,24 @@ export default function HomePage() {
           </h1>
 
           <p className="mt-4 text-base leading-7 text-slate-600">
-            Explora nuestra variedad de productos,
-            descubre nuevas opciones y consulta
-            fácilmente por WhatsApp.
+            Explora nuestra variedad de productos
+            y encuentra fácilmente lo que buscas.
           </p>
         </div>
       </section>
 
       <section className="mt-10">
-        <h2 className="text-2xl font-bold text-slate-900">
-          Nuestros productos
-        </h2>
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-slate-900">
+            Nuestros productos
+          </h2>
 
-        <p className="mt-2 text-slate-600">
-          Próximamente encontrarás aquí todos
-          nuestros productos disponibles.
-        </p>
+          <p className="mt-2 text-sm text-slate-600">
+            Descubre todos nuestros artículos.
+          </p>
+        </div>
+
+        <ProductGrid products={mockProducts} />
       </section>
     </div>
   );
