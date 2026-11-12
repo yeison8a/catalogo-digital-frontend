@@ -1,5 +1,5 @@
 
-import ProductGrid from "@/components/products/ProductGrid";
+import ProductCatalog from "@/components/products/ProductCatalog";
 import { mockProducts } from "@/mocks/products";
 
 export default function HomePage() {
@@ -33,7 +33,7 @@ export default function HomePage() {
           </p>
         </div>
 
-        <ProductGrid products={mockProducts} />
+        <ProductCatalog products={mockProducts} />
       </section>
     </div>
   );
