@@ -8,6 +8,10 @@ import Link from "next/link";
 
 import type { Category, Product } from "@/types/product";
 import { saveProduct } from "@/lib/productStorage";
+import {
+  useStoredCategories,
+  mergeCategories,
+} from "@/lib/categoryStorage";
 
 interface ProductFormProps {
   categories: Category[];
@@ -27,6 +31,18 @@ export default function ProductForm({
   initialProduct,
 }: ProductFormProps) {
   const router = useRouter();
+
+
+const storedCategories = useStoredCategories();
+
+const allCategories = mergeCategories(
+  categories,
+  storedCategories
+);
+
+const activeCategories = allCategories.filter(
+  (category) => category.active
+);
 
   // Si existe initialProduct, estamos editando
   const isEditing = Boolean(initialProduct);
@@ -66,7 +82,7 @@ export default function ProductForm({
     const name = form.name.trim();
     const price = Number(form.price);
 
-    const category = categories.find(
+    const category = activeCategories.find(
       (item) => item.id === form.categoryId
     );
 
@@ -224,7 +240,7 @@ export default function ProductForm({
             Selecciona una categoría
           </option>
 
-          {categories.map((category) => (
+          {activeCategories.map((category) => (
             <option
               key={category.id}
               value={category.id}

@@ -13,6 +13,13 @@ import {
   mergeProducts,
 } from "@/lib/productStorage";
 
+import { mockCategories } from "@/mocks/categories";
+
+import {
+  useStoredCategories,
+  mergeCategories,
+} from "@/lib/categoryStorage";
+
 import ProductStatusControls from "./ProductStatusControls";
 
 interface AdminProductListProps {
@@ -37,11 +44,32 @@ export default function AdminProductList({
   // Productos creados o modificados en localStorage
   const storedProducts = useStoredProducts();
 
+
+const storedCategories = useStoredCategories();
+
+const allCategories = mergeCategories(
+  mockCategories,
+  storedCategories
+);
+
+const categoryMap = new Map(
+  allCategories.map((category) => [
+    category.id,
+    category,
+  ])
+);
+
+
   // Combinar originales y locales sin duplicados
-  const allProducts = mergeProducts(
-    products,
-    storedProducts
-  );
+const allProducts = mergeProducts(
+  products,
+  storedProducts
+).map((product) => ({
+  ...product,
+  category:
+    categoryMap.get(product.category.id) ??
+    product.category,
+}));
 
   // Normalizar el texto una sola vez
   const normalizedSearch = normalizeText(search);

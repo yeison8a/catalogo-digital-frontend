@@ -1,5 +1,6 @@
 
 import type { Product } from "@/types/product";
+import { mockCategories } from "@/mocks/categories";
 
 const categories = {
   technology: {
@@ -24,7 +25,7 @@ export const mockProducts: Product[] = [
     price: 90000,
     available: true,
     active: true,
-    category: categories.technology,
+    category: mockCategories[0],
     mainImageUrl: null,
   },
   {
@@ -34,7 +35,7 @@ export const mockProducts: Product[] = [
     price: 65000,
     available: true,
     active: true,
-    category: categories.accessories,
+    category: mockCategories[1],
     mainImageUrl: null,
   },
   {
@@ -44,7 +45,7 @@ export const mockProducts: Product[] = [
     price: 49000,
     available: false,
     active: true,
-    category: categories.home,
+    category: mockCategories[2],
     mainImageUrl: null,
   },
   {
@@ -54,7 +55,7 @@ export const mockProducts: Product[] = [
     price: 39000,
     available: true,
     active: true,
-    category: categories.accessories,
+    category: mockCategories[1],
     mainImageUrl: null,
   },
   {
@@ -64,7 +65,7 @@ export const mockProducts: Product[] = [
     price: 110000,
     available: true,
     active: true,
-    category: categories.technology,
+    category: mockCategories[0],
     mainImageUrl: null,
   },
   {
@@ -74,7 +75,7 @@ export const mockProducts: Product[] = [
     price: 25000,
     available: true,
     active: true,
-    category: categories.home,
+    category: mockCategories[2],
     mainImageUrl: null,
   },
 ];
