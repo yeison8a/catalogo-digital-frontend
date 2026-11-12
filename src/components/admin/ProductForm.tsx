@@ -8,6 +8,7 @@ import Link from "next/link";
 
 import type { Category, Product } from "@/types/product";
 import { saveProduct } from "@/lib/productStorage";
+import ProductImageUploader from "./ProductImageUploader";
 import {
   useStoredCategories,
   mergeCategories,
@@ -275,6 +276,10 @@ const activeCategories = allCategories.filter(
           <option value="false">Agotado</option>
         </select>
       </div>
+
+    <div className="border-t border-slate-200 pt-6">
+        <ProductImageUploader />
+    </div>
 
       {/* Error */}
       {error && (
