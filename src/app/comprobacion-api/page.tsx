@@ -1,0 +1,176 @@
+
+import {
+  getCategories,
+  getProducts,
+} from "@/lib/catalog-api";
+
+import type {
+  Category,
+  Product,
+} from "@/types/catalog";
+
+// Formatear precios en pesos colombianos
+const priceFormatter = new Intl.NumberFormat("es-CO", {
+  style: "currency",
+  currency: "COP",
+  maximumFractionDigits: 0,
+});
+
+export default async function ComprobacionApiPage() {
+
+  let categories: Category[] = [];
+  let products: Product[] = [];
+  let errorMessage: string | null = null;
+
+  try {
+    // Consultar ambos endpoints
+    const [categoriesResponse, productsResponse] =
+      await Promise.all([
+        getCategories(),
+        getProducts(),
+      ]);
+
+    categories = categoriesResponse;
+    products = productsResponse;
+
+  } catch (error) {
+    console.error(
+      "Error consultando Spring Boot:",
+      error
+    );
+
+    errorMessage =
+      "No se pudo conectar con la API de Spring Boot. " +
+      "Verifica que el backend esté ejecutándose.";
+  }
+
+  return (
+    <main className="mx-auto max-w-6xl p-6">
+
+      <h1 className="mb-2 text-3xl font-bold">
+        Comprobación de API
+      </h1>
+
+      <p className="mb-8 text-gray-600">
+        Datos reales de Spring Boot y PostgreSQL
+      </p>
+
+      {errorMessage ? (
+        <div className="rounded-lg border border-red-300 p-4 text-red-700">
+          {errorMessage}
+        </div>
+      ) : (
+        <>
+          {/* Resumen */}
+          <div className="mb-8 grid gap-4 sm:grid-cols-2">
+
+            <div className="rounded-xl border p-5">
+              <p className="text-sm text-gray-500">
+                Categorías activas
+              </p>
+
+              <p className="mt-2 text-3xl font-bold">
+                {categories.length}
+              </p>
+            </div>
+
+            <div className="rounded-xl border p-5">
+              <p className="text-sm text-gray-500">
+                Productos publicados
+              </p>
+
+              <p className="mt-2 text-3xl font-bold">
+                {products.length}
+              </p>
+            </div>
+          </div>
+
+          {/* Categorías */}
+          <section className="mb-10">
+
+            <h2 className="mb-4 text-xl font-semibold">
+              Categorías
+            </h2>
+
+            {categories.length === 0 ? (
+              <p>No existen categorías activas.</p>
+            ) : (
+              <div className="flex flex-wrap gap-3">
+                {categories.map((category) => (
+                  <span
+                    key={category.id}
+                    className="rounded-full border px-4 py-2 text-sm"
+                  >
+                    {category.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Productos */}
+          <section>
+
+            <h2 className="mb-4 text-xl font-semibold">
+              Productos
+            </h2>
+
+            {products.length === 0 ? (
+              <p>No existen productos publicados.</p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+
+                {products.map((product) => (
+
+                  <article
+                    key={product.id}
+                    className="rounded-xl border p-5"
+                  >
+
+                    <h3 className="text-lg font-semibold">
+                      {product.name}
+                    </h3>
+
+                    <p className="mt-1 text-sm text-gray-500">
+                      {product.categoryName}
+                    </p>
+
+                    <p className="mt-3 font-bold">
+                      {priceFormatter.format(product.price)}
+                    </p>
+
+                    <p className="mt-2 text-sm">
+                      {product.available
+                        ? "Disponible"
+                        : "Agotado"}
+                    </p>
+
+                    {product.description && (
+                      <p className="mt-3 text-sm text-gray-600">
+                        {product.description}
+                      </p>
+                    )}
+
+                    {product.mainImageUrl && (
+                      <a
+                        href={product.mainImageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-4 inline-block text-sm text-blue-600 underline"
+                      >
+                        Ver fotografía real
+                      </a>
+                    )}
+
+                  </article>
+
+                ))}
+
+              </div>
+            )}
+          </section>
+        </>
+      )}
+    </main>
+  );
+}
