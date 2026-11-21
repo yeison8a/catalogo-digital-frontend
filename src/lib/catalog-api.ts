@@ -4,6 +4,20 @@ import type {
   Product,
 } from "@/types/catalog";
 
+
+export class CatalogApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly endpoint: string
+  ) {
+    super(
+      `Error HTTP ${status} al consultar ${endpoint}`
+    );
+
+    this.name = "CatalogApiError";
+  }
+}
+
 // Dirección de Spring Boot.
 // Solo se utilizará en el servidor.
 const API_BASE_URL = process.env.API_BASE_URL;
@@ -30,11 +44,12 @@ async function apiGet<T>(endpoint: string): Promise<T> {
     }
   );
 
-  if (!response.ok) {
-    throw new Error(
-      `Error HTTP ${response.status} al consultar ${endpoint}`
-    );
-  }
+if (!response.ok) {
+  throw new CatalogApiError(
+    response.status,
+    endpoint
+  );
+}
 
   return (await response.json()) as T;
 }
