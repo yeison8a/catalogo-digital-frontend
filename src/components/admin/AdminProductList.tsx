@@ -5,22 +5,9 @@ import { useState } from "react";
 import Link from "next/link";
 
 import type { Product } from "@/types/product";
+
 import { formatCurrency } from "@/lib/formatCurrency";
 import { normalizeText } from "@/lib/normalizeText";
-
-import {
-  useStoredProducts,
-  mergeProducts,
-} from "@/lib/productStorage";
-
-import { mockCategories } from "@/mocks/categories";
-
-import {
-  useStoredCategories,
-  mergeCategories,
-} from "@/lib/categoryStorage";
-
-import ProductStatusControls from "./ProductStatusControls";
 
 interface AdminProductListProps {
   products: Product[];
@@ -34,68 +21,48 @@ type AvailabilityFilter =
 export default function AdminProductList({
   products,
 }: AdminProductListProps) {
-  // Estado de búsqueda
+
+  // Estado del buscador.
   const [search, setSearch] = useState("");
 
-  // Filtro de disponibilidad
+  // Estado del filtro de disponibilidad.
   const [availabilityFilter, setAvailabilityFilter] =
     useState<AvailabilityFilter>("all");
 
-  // Productos creados o modificados en localStorage
-  const storedProducts = useStoredProducts();
+  // Datos reales proporcionados por Spring Boot.
+  // No utilizamos localStorage ni mockProducts.
+  const allProducts = products;
 
-
-const storedCategories = useStoredCategories();
-
-const allCategories = mergeCategories(
-  mockCategories,
-  storedCategories
-);
-
-const categoryMap = new Map(
-  allCategories.map((category) => [
-    category.id,
-    category,
-  ])
-);
-
-
-  // Combinar originales y locales sin duplicados
-const allProducts = mergeProducts(
-  products,
-  storedProducts
-).map((product) => ({
-  ...product,
-  category:
-    categoryMap.get(product.category.id) ??
-    product.category,
-}));
-
-  // Normalizar el texto una sola vez
+  // Normalizar el texto de búsqueda.
   const normalizedSearch = normalizeText(search);
 
-  // Aplicar filtros
-  const filteredProducts = allProducts.filter((product) => {
-    const matchesSearch = normalizeText(
-      product.name
-    ).includes(normalizedSearch);
+  // Filtrar productos por nombre y disponibilidad.
+  const filteredProducts = allProducts.filter(
+    (product) => {
+      const matchesSearch = normalizeText(
+        product.name
+      ).includes(normalizedSearch);
 
-    const matchesAvailability =
-      availabilityFilter === "all" ||
-      (availabilityFilter === "available" &&
-        product.available) ||
-      (availabilityFilter === "unavailable" &&
-        !product.available);
+      const matchesAvailability =
+        availabilityFilter === "all" ||
+        (
+          availabilityFilter === "available" &&
+          product.available
+        ) ||
+        (
+          availabilityFilter === "unavailable" &&
+          !product.available
+        );
 
-    return matchesSearch && matchesAvailability;
-  });
+      return matchesSearch && matchesAvailability;
+    }
+  );
 
-  // Detectar filtros activos
   const hasActiveFilters =
     search.trim() !== "" ||
     availabilityFilter !== "all";
 
-  // Limpiar búsqueda y filtros
+  // Restablecer los filtros.
   function clearFilters() {
     setSearch("");
     setAvailabilityFilter("all");
@@ -103,8 +70,10 @@ const allProducts = mergeProducts(
 
   return (
     <section className="space-y-6">
-      {/* Encabezado y acción para crear productos */}
+
+      {/* Encabezado */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
         <div>
           <h2 className="text-lg font-semibold text-slate-900">
             Productos registrados
@@ -118,16 +87,20 @@ const allProducts = mergeProducts(
           </p>
         </div>
 
-        <Link
-          href="/admin/products/new"
-          className="inline-flex min-h-11 items-center justify-center rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+        {/* La creación se conectará en el paso 44.4 */}
+        <span
+          aria-disabled="true"
+          title="La creación de productos se conectará en el siguiente paso"
+          className="inline-flex min-h-11 cursor-not-allowed items-center justify-center rounded-xl bg-slate-300 px-5 py-3 text-sm font-semibold text-white"
         >
           + Nuevo producto
-        </Link>
+        </span>
+
       </div>
 
       {/* Buscador y filtro */}
       <div className="flex flex-col gap-3 sm:flex-row">
+
         <input
           type="search"
           value={search}
@@ -153,10 +126,12 @@ const allProducts = mergeProducts(
           <option value="available">Disponibles</option>
           <option value="unavailable">Agotados</option>
         </select>
+
       </div>
 
-      {/* Contador de resultados y limpiar filtros */}
+      {/* Contador y limpieza de filtros */}
       <div className="flex flex-wrap items-center justify-between gap-3">
+
         <p
           className="text-sm text-slate-500"
           role="status"
@@ -177,18 +152,22 @@ const allProducts = mergeProducts(
             Limpiar filtros
           </button>
         )}
+
       </div>
 
-      {/* Listado de productos */}
+      {/* Listado real de productos */}
       {filteredProducts.length === 0 ? (
+
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
+
           <h3 className="font-semibold text-slate-900">
             No se encontraron productos
           </h3>
 
           <p className="mt-2 text-sm text-slate-500">
-            Intenta con otro nombre o cambia
-            el filtro de disponibilidad.
+            {allProducts.length === 0
+              ? "No hay productos registrados en PostgreSQL."
+              : "Intenta con otro nombre o cambia el filtro de disponibilidad."}
           </p>
 
           {hasActiveFilters && (
@@ -200,16 +179,23 @@ const allProducts = mergeProducts(
               Mostrar todos los productos
             </button>
           )}
+
         </div>
+
       ) : (
+
         <div className="space-y-3">
+
           {filteredProducts.map((product) => (
+
             <article
               key={product.id}
               className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"
             >
+
               {/* Información del producto */}
               <div className="min-w-0 flex-1">
+
                 <h3 className="break-words font-semibold text-slate-900">
                   {product.name}
                 </h3>
@@ -222,7 +208,7 @@ const allProducts = mergeProducts(
                   {formatCurrency(product.price)}
                 </p>
 
-                {/* Estado de disponibilidad */}
+                {/* Disponibilidad */}
                 <span
                   className={`mt-2 inline-block rounded-full px-3 py-1 text-xs font-medium ${
                     product.available
@@ -234,13 +220,16 @@ const allProducts = mergeProducts(
                     ? "Disponible"
                     : "Agotado"}
                 </span>
+
               </div>
 
-              {/* Controles de estado */}
+              {/* Estado de publicación */}
               <div className="w-full space-y-3 border-t border-slate-100 pt-3 sm:w-48 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-                <ProductStatusControls product={product} />
 
-                {/* Estado de publicación */}
+                <p className="text-xs font-medium text-slate-500">
+                  Estado de publicación
+                </p>
+
                 <span
                   className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${
                     product.active
@@ -252,28 +241,52 @@ const allProducts = mergeProducts(
                     ? "Publicado"
                     : "Oculto"}
                 </span>
+
+                <p className="text-xs text-slate-400">
+                  Los cambios de estado se habilitarán
+                  al integrar las operaciones del backend.
+                </p>
+
               </div>
 
               {/* Acciones */}
               <div className="flex flex-wrap items-center gap-2">
-                <Link
-                  href={`/products/${product.id}`}
-                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                >
-                  Ver
-                </Link>
 
-                <Link
-                  href={`/admin/products/${product.id}/edit`}
-                  className="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                {product.active && product.category.active ? (
+                  <Link
+                    href={`/products/${product.id}`}
+                    className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                  >
+                    Ver
+                  </Link>
+                ) : (
+                  <span
+                    title="El producto no está visible en el catálogo público"
+                    className="inline-flex min-h-10 cursor-not-allowed items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-400"
+                  >
+                    Ver
+                  </span>
+                )}
+
+                {/* Edición pendiente de integración */}
+                <span
+                  aria-disabled="true"
+                  title="La edición se conectará con Spring Boot en un siguiente paso"
+                  className="inline-flex min-h-10 cursor-not-allowed items-center justify-center rounded-lg bg-slate-300 px-4 py-2 text-sm font-medium text-white"
                 >
                   Editar
-                </Link>
+                </span>
+
               </div>
+
             </article>
+
           ))}
+
         </div>
+
       )}
+
     </section>
   );
 }
