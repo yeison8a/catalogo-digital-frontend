@@ -5,8 +5,14 @@ import { notFound } from "next/navigation";
 
 import ProductForm from "@/components/admin/ProductForm";
 
+import ProductImageUploader from "@/components/admin/ProductImageUploader";
+
 import { getAdminProductById } from "@/lib/adminProductApi";
+
 import { getAdminCategories } from "@/lib/adminCategoryApi";
+
+import { getProductImages } from "@/lib/productImagesApi";
+
 import { toUiProduct } from "@/lib/productAdapter";
 
 interface EditProductPageProps {
@@ -14,25 +20,28 @@ interface EditProductPageProps {
 }
 
 /**
- * Consulta la información real del producto
- * y las categorías disponibles desde Spring Boot.
+ * Recupera producto, categorías y fotografías
+ * desde Spring Boot.
  */
 async function EditProductContent({
   params,
 }: EditProductPageProps) {
   const { id } = await params;
 
-  const [apiProduct, categories] = await Promise.all([
+  const [
+    apiProduct,
+    categories,
+    images,
+  ] = await Promise.all([
     getAdminProductById(id),
     getAdminCategories(),
+    getProductImages(id),
   ]);
 
   if (!apiProduct) {
     notFound();
   }
 
-  // Adaptar la respuesta de Spring Boot
-  // al modelo utilizado por ProductForm.
   const product = toUiProduct(
     apiProduct,
     categories
@@ -40,6 +49,7 @@ async function EditProductContent({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {/* Encabezado existente */}
       <div>
         <Link
           href="/admin/products"
@@ -57,19 +67,24 @@ async function EditProductContent({
         </p>
       </div>
 
+      {/* Formulario existente */}
       <ProductForm
         key={product.id}
         categories={categories}
         initialProduct={product}
       />
+
+      {/* Fotografías reales */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+        <ProductImageUploader
+          productId={product.id}
+          initialImages={images}
+        />
+      </div>
     </div>
   );
 }
 
-/**
- * Suspense permite consultar datos dinámicos
- * con Cache Components habilitado.
- */
 export default function EditProductPage({
   params,
 }: EditProductPageProps) {
@@ -80,7 +95,7 @@ export default function EditProductPage({
           className="mx-auto max-w-3xl py-12 text-center text-slate-600"
           role="status"
         >
-          Cargando producto desde PostgreSQL...
+          Cargando producto y fotografías...
         </div>
       }
     >
