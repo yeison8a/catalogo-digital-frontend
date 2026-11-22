@@ -1,18 +1,25 @@
 
-
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import type { FormEvent } from "react";
+
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import type { Category, Product } from "@/types/product";
+
 import { saveProduct } from "@/lib/productStorage";
 import ProductImageUploader from "./ProductImageUploader";
+
 import {
   useStoredCategories,
   mergeCategories,
 } from "@/lib/categoryStorage";
+
+import {
+  createProductAction,
+} from "@/app/(admin)/admin/products/new/actions";
 
 interface ProductFormProps {
   categories: Category[];
@@ -33,20 +40,21 @@ export default function ProductForm({
 }: ProductFormProps) {
   const router = useRouter();
 
+  // La edición antigua todavía utiliza almacenamiento local.
+  // Se conserva para no romper el componente existente.
+  const storedCategories = useStoredCategories();
 
-const storedCategories = useStoredCategories();
-
-const allCategories = mergeCategories(
-  categories,
-  storedCategories
-);
-
-const activeCategories = allCategories.filter(
-  (category) => category.active
-);
-
-  // Si existe initialProduct, estamos editando
   const isEditing = Boolean(initialProduct);
+
+  // Para crear productos utilizamos exclusivamente
+  // las categorías reales recibidas desde Spring Boot.
+  const allCategories = isEditing
+    ? mergeCategories(categories, storedCategories)
+    : categories;
+
+  const activeCategories = allCategories.filter(
+    (category) => category.active
+  );
 
   const [form, setForm] = useState<FormValues>({
     name: initialProduct?.name ?? "",
@@ -59,8 +67,11 @@ const activeCategories = allCategories.filter(
   });
 
   const [error, setError] = useState("");
+  const [isPending, startTransition] = useTransition();
 
-  // Actualizar los valores del formulario
+  /**
+   * Actualiza los valores del formulario.
+   */
   function updateField<K extends keyof FormValues>(
     field: K,
     value: FormValues[K]
@@ -73,23 +84,43 @@ const activeCategories = allCategories.filter(
     setError("");
   }
 
-  // Procesar creación o edición
+  /**
+   * Valida los datos y registra el producto.
+   */
   function handleSubmit(
-    event: React.SubmitEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
+
+    if (isPending) {
+      return;
+    }
+
     setError("");
 
     const name = form.name.trim();
+    const description = form.description.trim();
     const price = Number(form.price);
 
     const category = activeCategories.find(
       (item) => item.id === form.categoryId
     );
 
-    if (name.length < 3 || name.length > 150) {
+    if (
+      name.length < (isEditing ? 3 : 2) ||
+      name.length > 150
+    ) {
       setError(
-        "El nombre debe tener entre 3 y 150 caracteres."
+        `El nombre debe tener entre ${
+          isEditing ? 3 : 2
+        } y 150 caracteres.`
+      );
+      return;
+    }
+
+    if (description.length > 2000) {
+      setError(
+        "La descripción no puede superar los 2000 caracteres."
       );
       return;
     }
@@ -106,30 +137,76 @@ const activeCategories = allCategories.filter(
     }
 
     if (!category) {
-      setError("Selecciona una categoría válida.");
+      setError("Selecciona una categoría activa válida.");
       return;
     }
 
-    const product: Product = {
-        id: initialProduct?.id ?? crypto.randomUUID(),
+    /**
+     * Edición antigua.
+     *
+     * Mantener este comportamiento temporalmente.
+     * La conexión de la edición con Spring Boot
+     * se implementará en el siguiente paso.
+     */
+    if (initialProduct) {
+      const product: Product = {
+        id: initialProduct.id,
         name,
-        description: form.description.trim(),
+        description,
         price,
         available: form.available,
-        active: initialProduct?.active ?? true,
+        active: initialProduct.active,
         category,
-        mainImageUrl: initialProduct?.mainImageUrl ?? null,
-    };
+        mainImageUrl: initialProduct.mainImageUrl,
+      };
 
-    try {
-      saveProduct(product);
+      try {
+        saveProduct(product);
+        router.push("/admin/products");
+      } catch {
+        setError("No fue posible guardar los cambios.");
+      }
 
-      router.push("/admin/products");
-    } catch {
-      setError(
-        "No fue posible guardar los cambios."
-      );
+      return;
     }
+
+    /**
+     * Creación real.
+     *
+     * No generamos UUID en el navegador.
+     * Spring Boot crea el producto y devuelve
+     * su identificador.
+     */
+    startTransition(async () => {
+      try {
+        const result = await createProductAction({
+          name,
+          description,
+          price,
+          categoryId: category.id,
+        });
+
+        if (!result.success) {
+          setError(result.message);
+          return;
+        }
+
+        // El UUID lo genera Spring Boot.
+        // Volvemos al listado administrativo real.
+        router.push("/admin/products");
+        router.refresh();
+
+      } catch (error) {
+        console.error(
+          "Error inesperado al crear producto:",
+          error
+        );
+
+        setError(
+          "Ocurrió un error inesperado al registrar el producto."
+        );
+      }
+    });
   }
 
   return (
@@ -137,6 +214,7 @@ const activeCategories = allCategories.filter(
       onSubmit={handleSubmit}
       className="space-y-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8"
     >
+      {/* Encabezado */}
       <div>
         <h2 className="text-xl font-semibold text-slate-900">
           {isEditing
@@ -162,14 +240,15 @@ const activeCategories = allCategories.filter(
           id="name"
           type="text"
           required
-          minLength={3}
+          minLength={isEditing ? 3 : 2}
           maxLength={150}
           value={form.name}
+          disabled={isPending}
           onChange={(event) =>
             updateField("name", event.target.value)
           }
           placeholder="Ej. Audífonos inalámbricos"
-          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-primary"
+          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-primary disabled:bg-slate-100"
         />
       </div>
 
@@ -185,12 +264,14 @@ const activeCategories = allCategories.filter(
         <textarea
           id="description"
           rows={4}
+          maxLength={2000}
           value={form.description}
+          disabled={isPending}
           onChange={(event) =>
             updateField("description", event.target.value)
           }
           placeholder="Describe las características..."
-          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-primary"
+          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-primary disabled:bg-slate-100"
         />
       </div>
 
@@ -211,11 +292,12 @@ const activeCategories = allCategories.filter(
           max={9999999999}
           step={1}
           value={form.price}
+          disabled={isPending}
           onChange={(event) =>
             updateField("price", event.target.value)
           }
           placeholder="90000"
-          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-primary"
+          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-primary disabled:bg-slate-100"
         />
       </div>
 
@@ -232,10 +314,11 @@ const activeCategories = allCategories.filter(
           id="category"
           required
           value={form.categoryId}
+          disabled={isPending || activeCategories.length === 0}
           onChange={(event) =>
             updateField("categoryId", event.target.value)
           }
-          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary"
+          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary disabled:bg-slate-100"
         >
           <option value="">
             Selecciona una categoría
@@ -250,36 +333,62 @@ const activeCategories = allCategories.filter(
             </option>
           ))}
         </select>
+
+        {activeCategories.length === 0 && (
+          <p className="text-sm text-amber-700">
+            No hay categorías activas disponibles.
+            Primero debes crear o activar una categoría.
+          </p>
+        )}
       </div>
 
-      {/* Disponibilidad */}
-      <div className="space-y-2">
-        <label
-          htmlFor="available"
-          className="block text-sm font-medium"
-        >
-          Disponibilidad
-        </label>
+      {/* Disponibilidad: edición antigua */}
+      {isEditing && (
+        <div className="space-y-2">
+          <label
+            htmlFor="available"
+            className="block text-sm font-medium"
+          >
+            Disponibilidad
+          </label>
 
-        <select
-          id="available"
-          value={form.available ? "true" : "false"}
-          onChange={(event) =>
-            updateField(
-              "available",
-              event.target.value === "true"
-            )
-          }
-          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary"
-        >
-          <option value="true">Disponible</option>
-          <option value="false">Agotado</option>
-        </select>
-      </div>
+          <select
+            id="available"
+            value={form.available ? "true" : "false"}
+            disabled={isPending}
+            onChange={(event) =>
+              updateField(
+                "available",
+                event.target.value === "true"
+              )
+            }
+            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary"
+          >
+            <option value="true">Disponible</option>
+            <option value="false">Agotado</option>
+          </select>
+        </div>
+      )}
 
-    <div className="border-t border-slate-200 pt-6">
-        <ProductImageUploader />
-    </div>
+      {/* Fotografías: se integrarán después */}
+      {isEditing ? (
+        <div className="border-t border-slate-200 pt-6">
+          <ProductImageUploader />
+        </div>
+      ) : (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-semibold text-slate-800">
+            Fotografías y disponibilidad
+          </p>
+
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Primero registraremos el producto en PostgreSQL.
+            Después podrás configurar su disponibilidad
+            y subir sus fotografías a Cloudinary desde
+            las herramientas administrativas.
+          </p>
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -295,18 +404,27 @@ const activeCategories = allCategories.filter(
       <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:justify-end">
         <Link
           href="/admin/products"
-          className="rounded-xl border border-slate-300 px-6 py-3 text-center text-sm font-medium text-slate-700 hover:bg-slate-50"
+          aria-disabled={isPending}
+          onClick={(event) => {
+            if (isPending) event.preventDefault();
+          }}
+          className={`rounded-xl border border-slate-300 px-6 py-3 text-center text-sm font-medium text-slate-700 hover:bg-slate-50 ${
+            isPending ? "pointer-events-none opacity-50" : ""
+          }`}
         >
           Cancelar
         </Link>
 
         <button
           type="submit"
-          className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+          disabled={isPending || activeCategories.length === 0}
+          className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isEditing
-            ? "Guardar cambios"
-            : "Guardar producto"}
+          {isPending
+            ? "Guardando producto..."
+            : isEditing
+              ? "Guardar cambios"
+              : "Guardar producto"}
         </button>
       </div>
     </form>

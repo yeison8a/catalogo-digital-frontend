@@ -88,13 +88,12 @@ export default function AdminProductList({
         </div>
 
         {/* La creación se conectará en el paso 44.4 */}
-        <span
-          aria-disabled="true"
-          title="La creación de productos se conectará en el siguiente paso"
-          className="inline-flex min-h-11 cursor-not-allowed items-center justify-center rounded-xl bg-slate-300 px-5 py-3 text-sm font-semibold text-white"
-        >
-          + Nuevo producto
-        </span>
+        <Link
+  href="/admin/products/new"
+  className="inline-flex min-h-11 items-center justify-center rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+>
+  + Nuevo producto
+</Link>
 
       </div>
 
