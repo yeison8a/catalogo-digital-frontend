@@ -231,3 +231,129 @@ export async function uploadProductImageAction(
     };
   }
 }
+
+
+/**
+ * Resultado de seleccionar una fotografía principal.
+ */
+export type SetMainProductImageResult =
+  | {
+      success: true;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+/**
+ * Establece una fotografía almacenada como
+ * imagen principal de un producto.
+ *
+ * Next.js -> Spring Boot -> PostgreSQL.
+ */
+export async function setMainProductImageAction(
+  productId: string,
+  imageId: string
+): Promise<SetMainProductImageResult> {
+
+  // Restricción temporal para desarrollo local.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  // Validar UUID del producto.
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador del producto no es válido.",
+    };
+  }
+
+  // Validar UUID de la fotografía.
+  if (
+    typeof imageId !== "string" ||
+    !UUID_REGEX.test(imageId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador de la fotografía no es válido.",
+    };
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}/images/${imageId}/main`,
+      {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto o la fotografía ya no existe.",
+      };
+    }
+
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó la fotografía seleccionada.",
+      };
+    }
+
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No es posible seleccionar esta fotografía debido a una restricción del backend.",
+      };
+    }
+
+    if (!response.ok) {
+      console.error(
+        "Error al cambiar la imagen principal:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible cambiar la imagen principal.",
+      };
+    }
+
+    // El backend confirmó una respuesta exitosa.
+    // La interfaz volverá a consultar PostgreSQL.
+    return {
+      success: true,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión al cambiar la imagen principal:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo confirmar el cambio. Verifica cuál fotografía es principal antes de reintentar.",
+    };
+  }
+}
