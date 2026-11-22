@@ -268,13 +268,12 @@ export default function AdminProductList({
                 )}
 
                 {/* Edición pendiente de integración */}
-                <span
-                  aria-disabled="true"
-                  title="La edición se conectará con Spring Boot en un siguiente paso"
-                  className="inline-flex min-h-10 cursor-not-allowed items-center justify-center rounded-lg bg-slate-300 px-4 py-2 text-sm font-medium text-white"
-                >
-                  Editar
-                </span>
+                <Link
+  href={`/admin/products/${product.id}/edit`}
+  className="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+>
+  Editar
+</Link>
 
               </div>
 

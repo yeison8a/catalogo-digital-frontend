@@ -7,19 +7,18 @@ import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-import type { Category, Product } from "@/types/product";
-
-import { saveProduct } from "@/lib/productStorage";
-import ProductImageUploader from "./ProductImageUploader";
-
-import {
-  useStoredCategories,
-  mergeCategories,
-} from "@/lib/categoryStorage";
+import type {
+  Category,
+  Product,
+} from "@/types/product";
 
 import {
   createProductAction,
 } from "@/app/(admin)/admin/products/new/actions";
+
+import {
+  updateProductAction,
+} from "@/app/(admin)/admin/products/[id]/edit/actions";
 
 interface ProductFormProps {
   categories: Category[];
@@ -31,7 +30,6 @@ interface FormValues {
   description: string;
   price: string;
   categoryId: string;
-  available: boolean;
 }
 
 export default function ProductForm({
@@ -40,20 +38,23 @@ export default function ProductForm({
 }: ProductFormProps) {
   const router = useRouter();
 
-  // La edición antigua todavía utiliza almacenamiento local.
-  // Se conserva para no romper el componente existente.
-  const storedCategories = useStoredCategories();
-
   const isEditing = Boolean(initialProduct);
 
-  // Para crear productos utilizamos exclusivamente
-  // las categorías reales recibidas desde Spring Boot.
-  const allCategories = isEditing
-    ? mergeCategories(categories, storedCategories)
-    : categories;
-
-  const activeCategories = allCategories.filter(
-    (category) => category.active
+  /**
+   * Las categorías provienen de PostgreSQL.
+   *
+   * Permitimos conservar la categoría actual
+   * en edición, incluso si fue desactivada.
+   * Para seleccionar una categoría diferente,
+   * esta debe estar activa.
+   */
+  const availableCategories = categories.filter(
+    (category) =>
+      category.active ||
+      (
+        isEditing &&
+        category.id === initialProduct?.category.id
+      )
   );
 
   const [form, setForm] = useState<FormValues>({
@@ -63,14 +64,13 @@ export default function ProductForm({
       ? String(initialProduct.price)
       : "",
     categoryId: initialProduct?.category.id ?? "",
-    available: initialProduct?.available ?? true,
   });
 
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
 
   /**
-   * Actualiza los valores del formulario.
+   * Modificar los campos del formulario.
    */
   function updateField<K extends keyof FormValues>(
     field: K,
@@ -85,7 +85,7 @@ export default function ProductForm({
   }
 
   /**
-   * Valida los datos y registra el producto.
+   * Validar los datos antes de enviarlos.
    */
   function handleSubmit(
     event: FormEvent<HTMLFormElement>
@@ -102,18 +102,13 @@ export default function ProductForm({
     const description = form.description.trim();
     const price = Number(form.price);
 
-    const category = activeCategories.find(
+    const category = availableCategories.find(
       (item) => item.id === form.categoryId
     );
 
-    if (
-      name.length < (isEditing ? 3 : 2) ||
-      name.length > 150
-    ) {
+    if (name.length < 2 || name.length > 150) {
       setError(
-        `El nombre debe tener entre ${
-          isEditing ? 3 : 2
-        } y 150 caracteres.`
+        "El nombre debe tener entre 2 y 150 caracteres."
       );
       return;
     }
@@ -128,8 +123,8 @@ export default function ProductForm({
     if (
       form.price.trim() === "" ||
       !Number.isFinite(price) ||
-      price < 0 ||
       !Number.isInteger(price) ||
+      price < 0 ||
       price > 9999999999
     ) {
       setError("Ingresa un precio válido en COP.");
@@ -137,73 +132,50 @@ export default function ProductForm({
     }
 
     if (!category) {
-      setError("Selecciona una categoría activa válida.");
+      setError("Selecciona una categoría válida.");
       return;
     }
 
-    /**
-     * Edición antigua.
-     *
-     * Mantener este comportamiento temporalmente.
-     * La conexión de la edición con Spring Boot
-     * se implementará en el siguiente paso.
-     */
-    if (initialProduct) {
-      const product: Product = {
-        id: initialProduct.id,
-        name,
-        description,
-        price,
-        available: form.available,
-        active: initialProduct.active,
-        category,
-        mainImageUrl: initialProduct.mainImageUrl,
-      };
+    const input = {
+      name,
+      description,
+      price,
+      categoryId: category.id,
+    };
 
-      try {
-        saveProduct(product);
-        router.push("/admin/products");
-      } catch {
-        setError("No fue posible guardar los cambios.");
-      }
-
-      return;
-    }
-
-    /**
-     * Creación real.
-     *
-     * No generamos UUID en el navegador.
-     * Spring Boot crea el producto y devuelve
-     * su identificador.
-     */
     startTransition(async () => {
       try {
-        const result = await createProductAction({
-          name,
-          description,
-          price,
-          categoryId: category.id,
-        });
+        /**
+         * EDICIÓN REAL
+         *
+         * Spring Boot conserva el UUID
+         * y actualiza el registro existente.
+         */
+        const result = initialProduct
+          ? await updateProductAction(
+              initialProduct.id,
+              input
+            )
+          : await createProductAction(input);
 
         if (!result.success) {
           setError(result.message);
           return;
         }
 
-        // El UUID lo genera Spring Boot.
-        // Volvemos al listado administrativo real.
+        // Consultar nuevamente los datos reales
+        // después de guardar.
         router.push("/admin/products");
         router.refresh();
 
       } catch (error) {
         console.error(
-          "Error inesperado al crear producto:",
+          "Error al guardar producto:",
           error
         );
 
         setError(
-          "Ocurrió un error inesperado al registrar el producto."
+          "Ocurrió un error inesperado al guardar el producto."
         );
       }
     });
@@ -240,7 +212,7 @@ export default function ProductForm({
           id="name"
           type="text"
           required
-          minLength={isEditing ? 3 : 2}
+          minLength={2}
           maxLength={150}
           value={form.name}
           disabled={isPending}
@@ -314,7 +286,10 @@ export default function ProductForm({
           id="category"
           required
           value={form.categoryId}
-          disabled={isPending || activeCategories.length === 0}
+          disabled={
+            isPending ||
+            availableCategories.length === 0
+          }
           onChange={(event) =>
             updateField("categoryId", event.target.value)
           }
@@ -324,71 +299,42 @@ export default function ProductForm({
             Selecciona una categoría
           </option>
 
-          {activeCategories.map((category) => (
+          {availableCategories.map((category) => (
             <option
               key={category.id}
               value={category.id}
             >
               {category.name}
+              {!category.active ? " (inactiva)" : ""}
             </option>
           ))}
         </select>
 
-        {activeCategories.length === 0 && (
+        {availableCategories.length === 0 && (
           <p className="text-sm text-amber-700">
-            No hay categorías activas disponibles.
-            Primero debes crear o activar una categoría.
+            No hay categorías disponibles.
+            Primero debes crear o activar
+            una categoría.
           </p>
         )}
       </div>
 
-      {/* Disponibilidad: edición antigua */}
-      {isEditing && (
-        <div className="space-y-2">
-          <label
-            htmlFor="available"
-            className="block text-sm font-medium"
-          >
-            Disponibilidad
-          </label>
+      {/* Funcionalidades independientes */}
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <p className="text-sm font-semibold text-slate-800">
+          Fotografías, publicación y disponibilidad
+        </p>
 
-          <select
-            id="available"
-            value={form.available ? "true" : "false"}
-            disabled={isPending}
-            onChange={(event) =>
-              updateField(
-                "available",
-                event.target.value === "true"
-              )
-            }
-            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary"
-          >
-            <option value="true">Disponible</option>
-            <option value="false">Agotado</option>
-          </select>
-        </div>
-      )}
-
-      {/* Fotografías: se integrarán después */}
-      {isEditing ? (
-        <div className="border-t border-slate-200 pt-6">
-          <ProductImageUploader />
-        </div>
-      ) : (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-sm font-semibold text-slate-800">
-            Fotografías y disponibilidad
-          </p>
-
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Primero registraremos el producto en PostgreSQL.
-            Después podrás configurar su disponibilidad
-            y subir sus fotografías a Cloudinary desde
-            las herramientas administrativas.
-          </p>
-        </div>
-      )}
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          Este formulario guarda el nombre,
+          la descripción, el precio y la categoría
+          en PostgreSQL.
+          La publicación, disponibilidad y
+          gestión de fotografías se configurarán
+          mediante las herramientas administrativas
+          correspondientes.
+        </p>
+      </div>
 
       {/* Error */}
       {error && (
@@ -402,14 +348,19 @@ export default function ProductForm({
 
       {/* Acciones */}
       <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:justify-end">
+
         <Link
           href="/admin/products"
           aria-disabled={isPending}
           onClick={(event) => {
-            if (isPending) event.preventDefault();
+            if (isPending) {
+              event.preventDefault();
+            }
           }}
           className={`rounded-xl border border-slate-300 px-6 py-3 text-center text-sm font-medium text-slate-700 hover:bg-slate-50 ${
-            isPending ? "pointer-events-none opacity-50" : ""
+            isPending
+              ? "pointer-events-none opacity-50"
+              : ""
           }`}
         >
           Cancelar
@@ -417,7 +368,10 @@ export default function ProductForm({
 
         <button
           type="submit"
-          disabled={isPending || activeCategories.length === 0}
+          disabled={
+            isPending ||
+            availableCategories.length === 0
+          }
           className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isPending
@@ -426,6 +380,7 @@ export default function ProductForm({
               ? "Guardar cambios"
               : "Guardar producto"}
         </button>
+
       </div>
     </form>
   );
