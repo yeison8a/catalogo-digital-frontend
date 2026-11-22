@@ -65,3 +65,37 @@ export async function getAdminProducts(): Promise<Product[]> {
     "/admin/products"
   );
 }
+
+
+/**
+ * Obtiene un producto administrativo por su UUID.
+ *
+ * A diferencia del endpoint público, permite
+ * consultar también productos ocultos.
+ */
+export async function getAdminProductById(
+  id: string
+): Promise<Product | null> {
+  const UUID_REGEX =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  if (!UUID_REGEX.test(id)) {
+    return null;
+  }
+
+  try {
+    return await adminGet<Product>(
+      `/admin/products/${id}`
+    );
+  } catch (error) {
+    if (
+      error instanceof AdminProductApiError &&
+      error.status === 404
+    ) {
+      return null;
+    }
+
+    // Otros errores deben seguir propagándose.
+    throw error;
+  }
+}
