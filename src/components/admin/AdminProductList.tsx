@@ -9,6 +9,8 @@ import type { Product } from "@/types/product";
 import { formatCurrency } from "@/lib/formatCurrency";
 import { normalizeText } from "@/lib/normalizeText";
 
+import ProductStatusControls from "./ProductStatusControls";
+
 interface AdminProductListProps {
   products: Product[];
 }
@@ -222,31 +224,27 @@ export default function AdminProductList({
 
               </div>
 
-              {/* Estado de publicación */}
-              <div className="w-full space-y-3 border-t border-slate-100 pt-3 sm:w-48 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+              
+{/* Controles reales de disponibilidad y publicación */}
+<div className="w-full space-y-3 border-t border-slate-100 pt-3 sm:w-48 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
 
-                <p className="text-xs font-medium text-slate-500">
-                  Estado de publicación
-                </p>
+  <ProductStatusControls product={product} />
 
-                <span
-                  className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${
-                    product.active
-                      ? "bg-blue-50 text-blue-700"
-                      : "bg-slate-100 text-slate-600"
-                  }`}
-                >
-                  {product.active
-                    ? "Publicado"
-                    : "Oculto"}
-                </span>
+  {/* Estado de publicación */}
+  <span
+    className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${
+      product.active
+        ? "bg-blue-50 text-blue-700"
+        : "bg-slate-100 text-slate-600"
+    }`}
+  >
+    {product.active
+      ? "Publicado"
+      : "Oculto"}
+  </span>
 
-                <p className="text-xs text-slate-400">
-                  Los cambios de estado se habilitarán
-                  al integrar las operaciones del backend.
-                </p>
+</div>
 
-              </div>
 
               {/* Acciones */}
               <div className="flex flex-wrap items-center gap-2">
