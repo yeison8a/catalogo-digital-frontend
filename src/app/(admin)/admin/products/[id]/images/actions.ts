@@ -500,3 +500,128 @@ export async function reorderProductImagesAction(
     };
   }
 }
+
+
+/**
+ * Resultado de solicitar la eliminación
+ * de una fotografía.
+ */
+export type DeleteProductImageResult =
+  | {
+      success: true;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+/**
+ * Solicita a Spring Boot la eliminación
+ * de una fotografía almacenada.
+ *
+ * El backend gestiona el procesamiento
+ * diferido de Cloudinary.
+ */
+export async function deleteProductImageAction(
+  productId: string,
+  imageId: string
+): Promise<DeleteProductImageResult> {
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador del producto no es válido.",
+    };
+  }
+
+  if (
+    typeof imageId !== "string" ||
+    !UUID_REGEX.test(imageId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador de la fotografía no es válido.",
+    };
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}/images/${imageId}`,
+      {
+        method: "DELETE",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto o la fotografía ya no existe. Recarga la página.",
+      };
+    }
+
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó la solicitud de eliminación.",
+      };
+    }
+
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No se puede eliminar la fotografía debido a una restricción del backend.",
+      };
+    }
+
+    if (!response.ok) {
+      console.error(
+        "Error HTTP al eliminar fotografía:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible solicitar la eliminación de la fotografía.",
+      };
+    }
+
+    // HTTP 202 significa que la solicitud
+    // fue aceptada para su procesamiento.
+    // No significa que Cloudinary haya
+    // completado el borrado físico.
+    return {
+      success: true,
+    };
+  } catch (error) {
+    console.error(
+      "Error solicitando eliminación:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo confirmar la eliminación. Comprueba las fotografías del producto antes de reintentar.",
+    };
+  }
+}

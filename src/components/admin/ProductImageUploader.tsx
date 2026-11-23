@@ -16,6 +16,7 @@ import {
   uploadProductImageAction,
   setMainProductImageAction,
   reorderProductImagesAction,
+  deleteProductImageAction,
 } from "@/app/(admin)/admin/products/[id]/images/actions";
 
 interface ProductImageUploaderProps {
@@ -31,6 +32,9 @@ const ALLOWED_TYPES = [
   "image/png",
 ];
 
+/**
+ * Generar una vista previa local.
+ */
 function readImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -55,15 +59,17 @@ function readImage(file: File): Promise<string> {
   });
 }
 
+/**
+ * Administrador de fotografías reales.
+ */
 export default function ProductImageUploader({
   productId,
   initialImages,
 }: ProductImageUploaderProps) {
   const router = useRouter();
-
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fotografías pendientes de subir.
+  // Fotografías seleccionadas, pero no subidas.
   const [selectedImages, setSelectedImages] =
     useState<SelectedProductImage[]>([]);
 
@@ -71,9 +77,15 @@ export default function ProductImageUploader({
   const [uploadedImages, setUploadedImages] =
     useState<ProductImage[]>([]);
 
-  // Orden confirmado por una operación de edición.
+  // Último orden confirmado por Spring Boot.
   const [orderedIds, setOrderedIds] =
     useState<string[] | null>(null);
+
+  // Fotografías cuya eliminación fue aceptada.
+  // Se ocultan mientras router.refresh() actualiza
+  // los datos del servidor.
+  const [deletedImageIds, setDeletedImageIds] =
+    useState<string[]>([]);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -95,34 +107,53 @@ export default function ProductImageUploader({
     setReorderingImageId,
   ] = useState<string | null>(null);
 
+  const [
+    confirmDeleteImageId,
+    setConfirmDeleteImageId,
+  ] = useState<string | null>(null);
+
+  const [
+    deletingImageId,
+    setDeletingImageId,
+  ] = useState<string | null>(null);
+
   /**
-   * Combinar fotografías recibidas de Spring Boot
-   * con las que acabamos de subir.
+   * Combinar imágenes reales sin duplicados.
    */
   const mergedImages = [
     ...initialImages,
     ...uploadedImages.filter(
       (uploaded) =>
         !initialImages.some(
-          (existing) => existing.id === uploaded.id
+          (existing) =>
+            existing.id === uploaded.id
         )
     ),
-  ].sort(
-    (a, b) => a.sortOrder - b.sortOrder
-  );
+  ]
+    .filter(
+      (image) =>
+        !deletedImageIds.includes(image.id)
+    )
+    .sort(
+      (a, b) => a.sortOrder - b.sortOrder
+    );
 
   /**
-   * Mostrar el último orden confirmado.
-   *
-   * Si todavía no hemos reordenado,
-   * utilizamos el orden de PostgreSQL.
+   * Aplicar el último orden confirmado.
+   * Si todavía no existe, usar sortOrder.
    */
   const persistedImages = orderedIds
     ? [...mergedImages].sort((a, b) => {
-        const aPosition = orderedIds.indexOf(a.id);
-        const bPosition = orderedIds.indexOf(b.id);
+        const aPosition =
+          orderedIds.indexOf(a.id);
 
-        if (aPosition === -1 && bPosition === -1) {
+        const bPosition =
+          orderedIds.indexOf(b.id);
+
+        if (
+          aPosition === -1 &&
+          bPosition === -1
+        ) {
           return a.sortOrder - b.sortOrder;
         }
 
@@ -141,14 +172,17 @@ export default function ProductImageUploader({
     isPreparing ||
     isUploading ||
     changingMainImageId !== null ||
-    reorderingImageId !== null;
+    reorderingImageId !== null ||
+    deletingImageId !== null;
 
   const canSelect =
     !isBusy &&
+    confirmDeleteImageId === null &&
     totalImages < MAX_IMAGES;
 
   /**
-   * Seleccionar fotografías y crear vistas previas.
+   * Seleccionar archivos y preparar
+   * las vistas previas.
    */
   async function handleFiles(
     event: ChangeEvent<HTMLInputElement>
@@ -159,7 +193,11 @@ export default function ProductImageUploader({
 
     event.target.value = "";
 
-    if (files.length === 0 || isBusy) {
+    if (
+      files.length === 0 ||
+      isBusy ||
+      confirmDeleteImageId !== null
+    ) {
       return;
     }
 
@@ -213,6 +251,7 @@ export default function ProductImageUploader({
         ...previous,
         ...previews,
       ]);
+
     } catch (unexpectedError) {
       console.error(
         "Error preparando fotografías:",
@@ -228,15 +267,17 @@ export default function ProductImageUploader({
   }
 
   /**
-   * Quitar una fotografía que todavía
-   * no se ha subido a Cloudinary.
+   * Quitar una fotografía pendiente.
    */
-  function removeSelectedImage(imageId: string) {
+  function removeSelectedImage(
+    imageId: string
+  ) {
     if (isBusy) return;
 
     setSelectedImages((previous) =>
       previous.filter(
-        (image) => image.id !== imageId
+        (image) =>
+          image.id !== imageId
       )
     );
 
@@ -245,11 +286,13 @@ export default function ProductImageUploader({
   }
 
   /**
-   * Subir fotografías reales.
+   * Subir fotografías a Spring Boot
+   * y Cloudinary, una por solicitud.
    */
   async function uploadImages() {
     if (
       isBusy ||
+      confirmDeleteImageId !== null ||
       selectedImages.length === 0
     ) {
       return;
@@ -260,8 +303,8 @@ export default function ProductImageUploader({
     setProgress("");
     setIsUploading(true);
 
-    let uploadedCount = 0;
     const pending = [...selectedImages];
+    let uploadedCount = 0;
 
     try {
       for (
@@ -314,14 +357,14 @@ export default function ProductImageUploader({
           uploaded,
         ]);
 
-        // Si ya existe un orden elegido,
-        // agregar la nueva imagen al final.
         setOrderedIds((previous) =>
           previous
             ? [...previous, uploaded.id]
             : null
         );
 
+        // Quitar solamente el archivo
+        // que se subió correctamente.
         setSelectedImages((previous) =>
           previous.filter(
             (image) =>
@@ -339,6 +382,7 @@ export default function ProductImageUploader({
       }
 
       router.refresh();
+
     } catch (unexpectedError) {
       console.error(
         "Error al subir fotografías:",
@@ -350,6 +394,7 @@ export default function ProductImageUploader({
       );
 
       router.refresh();
+
     } finally {
       setIsUploading(false);
       setProgress("");
@@ -362,11 +407,17 @@ export default function ProductImageUploader({
   async function handleSetMainImage(
     imageId: string
   ) {
-    if (isBusy) return;
+    if (
+      isBusy ||
+      confirmDeleteImageId !== null
+    ) {
+      return;
+    }
 
-    const selectedImage = persistedImages.find(
-      (image) => image.id === imageId
-    );
+    const selectedImage =
+      persistedImages.find(
+        (image) => image.id === imageId
+      );
 
     if (
       !selectedImage ||
@@ -403,6 +454,7 @@ export default function ProductImageUploader({
       );
 
       router.refresh();
+
     } catch (unexpectedError) {
       console.error(
         "Error seleccionando imagen principal:",
@@ -414,31 +466,37 @@ export default function ProductImageUploader({
       );
 
       router.refresh();
+
     } finally {
       setChangingMainImageId(null);
     }
   }
 
   /**
-   * Mover una fotografía una posición
-   * hacia la izquierda o la derecha.
+   * Mover una fotografía una posición.
    *
-   * direction:
-   * -1 = posición anterior
-   *  1 = posición siguiente
+   * -1: anterior
+   *  1: siguiente
    */
   async function handleMoveImage(
     imageId: string,
     direction: -1 | 1
   ) {
-    if (isBusy) return;
+    if (
+      isBusy ||
+      confirmDeleteImageId !== null
+    ) {
+      return;
+    }
 
     const currentIndex =
       persistedImages.findIndex(
         (image) => image.id === imageId
       );
 
-    if (currentIndex === -1) return;
+    if (currentIndex === -1) {
+      return;
+    }
 
     const targetIndex =
       currentIndex + direction;
@@ -450,12 +508,11 @@ export default function ProductImageUploader({
       return;
     }
 
-    // Obtener todos los UUID actuales.
     const nextIds = persistedImages.map(
       (image) => image.id
     );
 
-    // Intercambiar las dos posiciones.
+    // Intercambiar posiciones.
     [
       nextIds[currentIndex],
       nextIds[targetIndex],
@@ -480,16 +537,14 @@ export default function ProductImageUploader({
         return;
       }
 
-      // Solo cambiamos la secuencia local
-      // después de la confirmación del backend.
       setOrderedIds(nextIds);
 
       setMessage(
         "El orden de las fotografías se guardó correctamente."
       );
 
-      // Consultar nuevamente PostgreSQL.
       router.refresh();
+
     } catch (unexpectedError) {
       console.error(
         "Error al ordenar fotografías:",
@@ -497,17 +552,115 @@ export default function ProductImageUploader({
       );
 
       setError(
-        "No se pudo confirmar el orden. Recarga la página antes de intentarlo otra vez."
+        "No se pudo confirmar el orden. Recarga la página antes de reintentar."
       );
 
       router.refresh();
+
     } finally {
       setReorderingImageId(null);
     }
   }
 
+  /**
+   * Solicitar la eliminación de una
+   * fotografía real mediante Spring Boot.
+   *
+   * IMPORTANTE: esta función está fuera
+   * de handleMoveImage().
+   */
+  async function handleDeleteImage(
+    imageId: string
+  ) {
+    if (isBusy) {
+      return;
+    }
+
+    if (confirmDeleteImageId !== imageId) {
+      return;
+    }
+
+    const image = persistedImages.find(
+      (item) => item.id === imageId
+    );
+
+    if (!image) {
+      setError(
+        "No se encontró la fotografía seleccionada."
+      );
+      return;
+    }
+
+    setError("");
+    setMessage("");
+    setDeletingImageId(imageId);
+
+    try {
+      const result =
+        await deleteProductImageAction(
+          productId,
+          imageId
+        );
+
+      if (!result.success) {
+        setError(result.message);
+        return;
+      }
+
+      // La solicitud fue aceptada.
+      // Evitar mostrar una copia local
+      // del archivo eliminado.
+      setUploadedImages((previous) =>
+        previous.filter(
+          (item) => item.id !== imageId
+        )
+      );
+
+      // Ocultar temporalmente la fotografía
+      // mientras se actualizan los datos.
+      setDeletedImageIds((previous) =>
+        previous.includes(imageId)
+          ? previous
+          : [...previous, imageId]
+      );
+
+      // Conservar el orden de las restantes.
+      setOrderedIds((previous) =>
+        previous
+          ? previous.filter(
+              (id) => id !== imageId
+            )
+          : null
+      );
+
+      setConfirmDeleteImageId(null);
+
+      setMessage(
+        "Spring Boot aceptó la eliminación. La limpieza del archivo en Cloudinary se procesa en segundo plano."
+      );
+
+      router.refresh();
+
+    } catch (unexpectedError) {
+      console.error(
+        "Error al eliminar fotografía:",
+        unexpectedError
+      );
+
+      setError(
+        "No se pudo confirmar la eliminación. Comprueba las fotografías del producto antes de reintentar."
+      );
+
+      router.refresh();
+
+    } finally {
+      setDeletingImageId(null);
+    }
+  }
+
   return (
     <section className="space-y-4">
+
       {/* Encabezado */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900">
@@ -521,7 +674,7 @@ export default function ProductImageUploader({
         </p>
       </div>
 
-      {/* Selector */}
+      {/* Selector de fotografías */}
       <input
         ref={inputRef}
         type="file"
@@ -535,7 +688,9 @@ export default function ProductImageUploader({
 
       <button
         type="button"
-        onClick={() => inputRef.current?.click()}
+        onClick={() =>
+          inputRef.current?.click()
+        }
         disabled={!canSelect}
         className="flex min-h-32 w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-5 text-center transition-colors hover:border-blue-400 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -559,7 +714,7 @@ export default function ProductImageUploader({
         </span>
       </button>
 
-      {/* Mensajes */}
+      {/* Progreso */}
       {progress && (
         <p
           role="status"
@@ -569,6 +724,7 @@ export default function ProductImageUploader({
         </p>
       )}
 
+      {/* Errores */}
       {error && (
         <p
           role="alert"
@@ -578,6 +734,7 @@ export default function ProductImageUploader({
         </p>
       )}
 
+      {/* Mensaje de confirmación */}
       {message && (
         <p
           role="status"
@@ -587,7 +744,7 @@ export default function ProductImageUploader({
         </p>
       )}
 
-      {/* Fotografías guardadas */}
+      {/* Fotografías almacenadas */}
       {persistedImages.length > 0 && (
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-slate-800">
@@ -600,7 +757,7 @@ export default function ProductImageUploader({
                 key={image.id}
                 className="overflow-hidden rounded-xl border border-slate-200 bg-white"
               >
-                {/* Fotografía */}
+                {/* Imagen */}
                 <div className="relative aspect-square bg-slate-100">
                   <Image
                     src={image.imageUrl}
@@ -627,14 +784,21 @@ export default function ProductImageUploader({
                     {persistedImages.length}
                   </p>
 
-                  {/* Ordenar fotografías */}
+                  {/* Cambiar orden */}
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() =>
-                        handleMoveImage(image.id, -1)
+                        handleMoveImage(
+                          image.id,
+                          -1
+                        )
                       }
-                      disabled={isBusy || index === 0}
+                      disabled={
+                        isBusy ||
+                        confirmDeleteImageId !== null ||
+                        index === 0
+                      }
                       aria-label={`Mover fotografía ${index + 1} a la posición anterior`}
                       className="rounded-lg border border-slate-200 px-2 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                     >
@@ -644,11 +808,16 @@ export default function ProductImageUploader({
                     <button
                       type="button"
                       onClick={() =>
-                        handleMoveImage(image.id, 1)
+                        handleMoveImage(
+                          image.id,
+                          1
+                        )
                       }
                       disabled={
                         isBusy ||
-                        index === persistedImages.length - 1
+                        confirmDeleteImageId !== null ||
+                        index ===
+                          persistedImages.length - 1
                       }
                       aria-label={`Mover fotografía ${index + 1} a la posición siguiente`}
                       className="rounded-lg border border-slate-200 px-2 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
@@ -666,13 +835,17 @@ export default function ProductImageUploader({
                     </p>
                   )}
 
-                  {/* Imagen principal */}
+                  {/* Cambiar imagen principal */}
                   <button
                     type="button"
                     onClick={() =>
                       handleSetMainImage(image.id)
                     }
-                    disabled={isBusy || image.mainImage}
+                    disabled={
+                      isBusy ||
+                      confirmDeleteImageId !== null ||
+                      image.mainImage
+                    }
                     className="w-full rounded-lg border border-slate-200 px-2 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                   >
                     {changingMainImageId === image.id
@@ -682,15 +855,65 @@ export default function ProductImageUploader({
                         : "Hacer principal"}
                   </button>
 
-                  {/* Eliminación pendiente */}
-                  <button
-                    type="button"
-                    disabled
-                    title="Disponible en un próximo paso"
-                    className="w-full cursor-not-allowed rounded-lg bg-red-50 px-2 py-2 text-xs font-medium text-red-400"
-                  >
-                    Eliminar
-                  </button>
+                  {/* Eliminación real con confirmación */}
+                  {confirmDeleteImageId === image.id ? (
+                    <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-sm font-medium text-amber-900">
+                        ¿Deseas eliminar esta fotografía?
+                      </p>
+
+                      <p className="text-xs text-amber-800">
+                        Se retirará del producto.
+                        La limpieza del archivo en
+                        Cloudinary se procesará
+                        en segundo plano.
+                      </p>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() =>
+                            setConfirmDeleteImageId(null)
+                          }
+                          className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 disabled:opacity-50"
+                        >
+                          Cancelar
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() =>
+                            handleDeleteImage(image.id)
+                          }
+                          className="flex-1 rounded-lg bg-red-700 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+                        >
+                          {deletingImageId === image.id
+                            ? "Eliminando..."
+                            : "Confirmar"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={
+                        isBusy ||
+                        confirmDeleteImageId !== null
+                      }
+                      onClick={() => {
+                        setError("");
+                        setMessage("");
+                        setConfirmDeleteImageId(
+                          image.id
+                        );
+                      }}
+                      className="w-full rounded-lg bg-red-50 px-2 py-2 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Eliminar
+                    </button>
+                  )}
                 </div>
               </article>
             ))}
@@ -738,7 +961,9 @@ export default function ProductImageUploader({
                     type="button"
                     disabled={isBusy}
                     onClick={() =>
-                      removeSelectedImage(image.id)
+                      removeSelectedImage(
+                        image.id
+                      )
                     }
                     className="w-full rounded-lg bg-red-50 px-2 py-2 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
                   >
@@ -751,7 +976,10 @@ export default function ProductImageUploader({
 
           <button
             type="button"
-            disabled={isBusy}
+            disabled={
+              isBusy ||
+              confirmDeleteImageId !== null
+            }
             onClick={uploadImages}
             className="w-full rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -766,13 +994,16 @@ export default function ProductImageUploader({
         </div>
       )}
 
+      {/* Información */}
       <p className="text-xs text-slate-500">
-        Utiliza Anterior y Siguiente para cambiar
-        el orden de las fotografías guardadas.
-        La imagen principal se administra por separado.
-        La eliminación de fotografías almacenadas
-        se habilitará posteriormente.
+        Puedes subir fotografías, seleccionar
+        la imagen principal y cambiar su orden.
+        Para eliminar una fotografía guardada
+        debes confirmar la operación.
+        Spring Boot gestiona la limpieza
+        de Cloudinary mediante procesamiento diferido.
       </p>
+
     </section>
   );
 }
