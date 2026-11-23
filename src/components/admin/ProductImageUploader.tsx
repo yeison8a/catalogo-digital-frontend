@@ -15,6 +15,7 @@ import type {
 import {
   uploadProductImageAction,
   setMainProductImageAction,
+  reorderProductImagesAction,
 } from "@/app/(admin)/admin/products/[id]/images/actions";
 
 interface ProductImageUploaderProps {
@@ -30,10 +31,6 @@ const ALLOWED_TYPES = [
   "image/png",
 ];
 
-/**
- * Genera una vista previa local.
- * No envía ningún archivo al servidor.
- */
 function readImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -43,18 +40,14 @@ function readImage(file: File): Promise<string> {
         resolve(reader.result);
       } else {
         reject(
-          new Error(
-            "No se pudo leer la fotografía."
-          )
+          new Error("No se pudo leer la fotografía.")
         );
       }
     };
 
     reader.onerror = () => {
       reject(
-        new Error(
-          "No se pudo leer la fotografía."
-        )
+        new Error("No se pudo leer la fotografía.")
       );
     };
 
@@ -62,76 +55,83 @@ function readImage(file: File): Promise<string> {
   });
 }
 
-/**
- * Componente para administrar las fotografías
- * reales de un producto.
- */
 export default function ProductImageUploader({
   productId,
   initialImages,
 }: ProductImageUploaderProps) {
   const router = useRouter();
 
-  const inputRef =
-    useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  /**
-   * Fotografías seleccionadas
-   * pero todavía no subidas.
-   */
-  const [
-    selectedImages,
-    setSelectedImages,
-  ] = useState<SelectedProductImage[]>([]);
+  // Fotografías pendientes de subir.
+  const [selectedImages, setSelectedImages] =
+    useState<SelectedProductImage[]>([]);
 
-  /**
-   * Fotografías subidas durante esta sesión.
-   * Se combinan con las recibidas del servidor
-   * sin duplicarlas.
-   */
-  const [
-    uploadedImages,
-    setUploadedImages,
-  ] = useState<ProductImage[]>([]);
+  // Fotografías subidas durante esta sesión.
+  const [uploadedImages, setUploadedImages] =
+    useState<ProductImage[]>([]);
+
+  // Orden confirmado por una operación de edición.
+  const [orderedIds, setOrderedIds] =
+    useState<string[] | null>(null);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [progress, setProgress] = useState("");
 
-  const [
-    isPreparing,
-    setIsPreparing,
-  ] = useState(false);
+  const [isPreparing, setIsPreparing] =
+    useState(false);
 
-  const [
-    isUploading,
-    setIsUploading,
-  ] = useState(false);
+  const [isUploading, setIsUploading] =
+    useState(false);
 
   const [
     changingMainImageId,
     setChangingMainImageId,
   ] = useState<string | null>(null);
 
+  const [
+    reorderingImageId,
+    setReorderingImageId,
+  ] = useState<string | null>(null);
+
   /**
-   * Fotografías confirmadas por PostgreSQL
-   * y las recién subidas.
-   *
-   * Si una imagen ya llegó desde el servidor,
-   * no usamos su copia temporal.
+   * Combinar fotografías recibidas de Spring Boot
+   * con las que acabamos de subir.
    */
-  const persistedImages = [
+  const mergedImages = [
     ...initialImages,
     ...uploadedImages.filter(
       (uploaded) =>
         !initialImages.some(
-          (existing) =>
-            existing.id === uploaded.id
+          (existing) => existing.id === uploaded.id
         )
     ),
   ].sort(
     (a, b) => a.sortOrder - b.sortOrder
   );
+
+  /**
+   * Mostrar el último orden confirmado.
+   *
+   * Si todavía no hemos reordenado,
+   * utilizamos el orden de PostgreSQL.
+   */
+  const persistedImages = orderedIds
+    ? [...mergedImages].sort((a, b) => {
+        const aPosition = orderedIds.indexOf(a.id);
+        const bPosition = orderedIds.indexOf(b.id);
+
+        if (aPosition === -1 && bPosition === -1) {
+          return a.sortOrder - b.sortOrder;
+        }
+
+        if (aPosition === -1) return 1;
+        if (bPosition === -1) return -1;
+
+        return aPosition - bPosition;
+      })
+    : mergedImages;
 
   const totalImages =
     persistedImages.length +
@@ -140,15 +140,15 @@ export default function ProductImageUploader({
   const isBusy =
     isPreparing ||
     isUploading ||
-    changingMainImageId !== null;
+    changingMainImageId !== null ||
+    reorderingImageId !== null;
 
   const canSelect =
     !isBusy &&
     totalImages < MAX_IMAGES;
 
   /**
-   * Seleccionar archivos y preparar
-   * las vistas previas.
+   * Seleccionar fotografías y crear vistas previas.
    */
   async function handleFiles(
     event: ChangeEvent<HTMLInputElement>
@@ -159,10 +159,7 @@ export default function ProductImageUploader({
 
     event.target.value = "";
 
-    if (
-      files.length === 0 ||
-      isBusy
-    ) {
+    if (files.length === 0 || isBusy) {
       return;
     }
 
@@ -179,9 +176,7 @@ export default function ProductImageUploader({
     }
 
     for (const file of files) {
-      if (
-        !ALLOWED_TYPES.includes(file.type)
-      ) {
+      if (!ALLOWED_TYPES.includes(file.type)) {
         setError(
           "Solo se permiten fotografías JPG o PNG."
         );
@@ -195,9 +190,7 @@ export default function ProductImageUploader({
         return;
       }
 
-      if (
-        file.size > MAX_FILE_SIZE
-      ) {
+      if (file.size > MAX_FILE_SIZE) {
         setError(
           `La fotografía "${file.name}" supera los 5 MiB.`
         );
@@ -235,17 +228,11 @@ export default function ProductImageUploader({
   }
 
   /**
-   * Quitar una fotografía pendiente.
-   *
-   * No elimina archivos de Cloudinary,
-   * porque esta imagen aún no se ha subido.
+   * Quitar una fotografía que todavía
+   * no se ha subido a Cloudinary.
    */
-  function removeSelectedImage(
-    imageId: string
-  ) {
-    if (isBusy) {
-      return;
-    }
+  function removeSelectedImage(imageId: string) {
+    if (isBusy) return;
 
     setSelectedImages((previous) =>
       previous.filter(
@@ -259,9 +246,6 @@ export default function ProductImageUploader({
 
   /**
    * Subir fotografías reales.
-   *
-   * El endpoint recibe un archivo
-   * por solicitud.
    */
   async function uploadImages() {
     if (
@@ -277,10 +261,9 @@ export default function ProductImageUploader({
     setIsUploading(true);
 
     let uploadedCount = 0;
+    const pending = [...selectedImages];
 
     try {
-      const pending = [...selectedImages];
-
       for (
         let index = 0;
         index < pending.length;
@@ -314,11 +297,6 @@ export default function ProductImageUploader({
 
         uploadedCount++;
 
-        /**
-         * Registrar la nueva fotografía
-         * mientras llegan los datos
-         * actualizados del servidor.
-         */
         const uploaded: ProductImage = {
           id: result.imageId,
           imageUrl: result.imageUrl,
@@ -336,10 +314,14 @@ export default function ProductImageUploader({
           uploaded,
         ]);
 
-        /**
-         * Quitar de pendientes solo la
-         * fotografía subida correctamente.
-         */
+        // Si ya existe un orden elegido,
+        // agregar la nueva imagen al final.
+        setOrderedIds((previous) =>
+          previous
+            ? [...previous, uploaded.id]
+            : null
+        );
+
         setSelectedImages((previous) =>
           previous.filter(
             (image) =>
@@ -356,12 +338,7 @@ export default function ProductImageUploader({
         );
       }
 
-      /**
-       * Recuperar los registros reales
-       * después de la operación.
-       */
       router.refresh();
-
     } catch (unexpectedError) {
       console.error(
         "Error al subir fotografías:",
@@ -373,7 +350,6 @@ export default function ProductImageUploader({
       );
 
       router.refresh();
-
     } finally {
       setIsUploading(false);
       setProgress("");
@@ -381,22 +357,16 @@ export default function ProductImageUploader({
   }
 
   /**
-   * CAMBIAR LA IMAGEN PRINCIPAL.
-   *
-   * Esta función está al mismo nivel
-   * que uploadImages(), no dentro de ella.
+   * Seleccionar la imagen principal real.
    */
   async function handleSetMainImage(
     imageId: string
   ) {
-    if (isBusy) {
-      return;
-    }
+    if (isBusy) return;
 
-    const selectedImage =
-      persistedImages.find(
-        (image) => image.id === imageId
-      );
+    const selectedImage = persistedImages.find(
+      (image) => image.id === imageId
+    );
 
     if (
       !selectedImage ||
@@ -421,14 +391,6 @@ export default function ProductImageUploader({
         return;
       }
 
-      /**
-       * Actualizar cualquier fotografía
-       * recién subida que todavía esté
-       * en el estado local.
-       *
-       * Los registros originales se
-       * actualizarán con router.refresh().
-       */
       setUploadedImages((previous) =>
         previous.map((image) => ({
           ...image,
@@ -441,27 +403,111 @@ export default function ProductImageUploader({
       );
 
       router.refresh();
-
     } catch (unexpectedError) {
       console.error(
-        "Error al seleccionar imagen principal:",
+        "Error seleccionando imagen principal:",
         unexpectedError
       );
 
       setError(
-        "No se pudo confirmar el cambio. Comprueba cuál fotografía es principal antes de reintentar."
+        "No fue posible confirmar el cambio de imagen principal."
       );
 
       router.refresh();
-
     } finally {
       setChangingMainImageId(null);
     }
   }
 
+  /**
+   * Mover una fotografía una posición
+   * hacia la izquierda o la derecha.
+   *
+   * direction:
+   * -1 = posición anterior
+   *  1 = posición siguiente
+   */
+  async function handleMoveImage(
+    imageId: string,
+    direction: -1 | 1
+  ) {
+    if (isBusy) return;
+
+    const currentIndex =
+      persistedImages.findIndex(
+        (image) => image.id === imageId
+      );
+
+    if (currentIndex === -1) return;
+
+    const targetIndex =
+      currentIndex + direction;
+
+    if (
+      targetIndex < 0 ||
+      targetIndex >= persistedImages.length
+    ) {
+      return;
+    }
+
+    // Obtener todos los UUID actuales.
+    const nextIds = persistedImages.map(
+      (image) => image.id
+    );
+
+    // Intercambiar las dos posiciones.
+    [
+      nextIds[currentIndex],
+      nextIds[targetIndex],
+    ] = [
+      nextIds[targetIndex],
+      nextIds[currentIndex],
+    ];
+
+    setError("");
+    setMessage("");
+    setReorderingImageId(imageId);
+
+    try {
+      const result =
+        await reorderProductImagesAction(
+          productId,
+          nextIds
+        );
+
+      if (!result.success) {
+        setError(result.message);
+        return;
+      }
+
+      // Solo cambiamos la secuencia local
+      // después de la confirmación del backend.
+      setOrderedIds(nextIds);
+
+      setMessage(
+        "El orden de las fotografías se guardó correctamente."
+      );
+
+      // Consultar nuevamente PostgreSQL.
+      router.refresh();
+    } catch (unexpectedError) {
+      console.error(
+        "Error al ordenar fotografías:",
+        unexpectedError
+      );
+
+      setError(
+        "No se pudo confirmar el orden. Recarga la página antes de intentarlo otra vez."
+      );
+
+      router.refresh();
+    } finally {
+      setReorderingImageId(null);
+    }
+  }
+
   return (
     <section className="space-y-4">
-
       {/* Encabezado */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900">
@@ -475,7 +521,7 @@ export default function ProductImageUploader({
         </p>
       </div>
 
-      {/* Selector de fotografías */}
+      {/* Selector */}
       <input
         ref={inputRef}
         type="file"
@@ -489,9 +535,7 @@ export default function ProductImageUploader({
 
       <button
         type="button"
-        onClick={() =>
-          inputRef.current?.click()
-        }
+        onClick={() => inputRef.current?.click()}
         disabled={!canSelect}
         className="flex min-h-32 w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-5 text-center transition-colors hover:border-blue-400 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -515,7 +559,7 @@ export default function ProductImageUploader({
         </span>
       </button>
 
-      {/* Progreso de subida */}
+      {/* Mensajes */}
       {progress && (
         <p
           role="status"
@@ -525,7 +569,6 @@ export default function ProductImageUploader({
         </p>
       )}
 
-      {/* Mensajes de error */}
       {error && (
         <p
           role="alert"
@@ -535,7 +578,6 @@ export default function ProductImageUploader({
         </p>
       )}
 
-      {/* Mensajes de éxito */}
       {message && (
         <p
           role="status"
@@ -545,32 +587,29 @@ export default function ProductImageUploader({
         </p>
       )}
 
-      {/* Fotografías almacenadas */}
+      {/* Fotografías guardadas */}
       {persistedImages.length > 0 && (
         <div className="space-y-3">
-
           <h3 className="text-sm font-semibold text-slate-800">
             Fotografías guardadas
           </h3>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {persistedImages.map((image) => (
+            {persistedImages.map((image, index) => (
               <article
                 key={image.id}
                 className="overflow-hidden rounded-xl border border-slate-200 bg-white"
               >
-
-                {/* Imagen */}
+                {/* Fotografía */}
                 <div className="relative aspect-square bg-slate-100">
                   <Image
                     src={image.imageUrl}
-                    alt="Fotografía del producto"
+                    alt={`Fotografía ${index + 1} del producto`}
                     fill
                     sizes="(max-width: 640px) 50vw, 33vw"
                     className="object-cover"
                   />
 
-                  {/* Indicador de principal */}
                   {image.mainImage && (
                     <span className="absolute left-2 top-2 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white">
                       Principal
@@ -579,23 +618,61 @@ export default function ProductImageUploader({
                 </div>
 
                 <div className="space-y-2 p-3">
-
                   <p className="text-xs text-green-700">
                     Guardada en Cloudinary
                   </p>
 
-                  {/* Cambiar imagen principal */}
+                  <p className="text-xs font-medium text-slate-600">
+                    Posición {index + 1} de{" "}
+                    {persistedImages.length}
+                  </p>
+
+                  {/* Ordenar fotografías */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleMoveImage(image.id, -1)
+                      }
+                      disabled={isBusy || index === 0}
+                      aria-label={`Mover fotografía ${index + 1} a la posición anterior`}
+                      className="rounded-lg border border-slate-200 px-2 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      ← Anterior
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleMoveImage(image.id, 1)
+                      }
+                      disabled={
+                        isBusy ||
+                        index === persistedImages.length - 1
+                      }
+                      aria-label={`Mover fotografía ${index + 1} a la posición siguiente`}
+                      className="rounded-lg border border-slate-200 px-2 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      Siguiente →
+                    </button>
+                  </div>
+
+                  {reorderingImageId === image.id && (
+                    <p
+                      role="status"
+                      className="text-xs text-blue-700"
+                    >
+                      Guardando orden...
+                    </p>
+                  )}
+
+                  {/* Imagen principal */}
                   <button
                     type="button"
                     onClick={() =>
-                      handleSetMainImage(
-                        image.id
-                      )
+                      handleSetMainImage(image.id)
                     }
-                    disabled={
-                      isBusy ||
-                      image.mainImage
-                    }
+                    disabled={isBusy || image.mainImage}
                     className="w-full rounded-lg border border-slate-200 px-2 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                   >
                     {changingMainImageId === image.id
@@ -614,7 +691,6 @@ export default function ProductImageUploader({
                   >
                     Eliminar
                   </button>
-
                 </div>
               </article>
             ))}
@@ -625,7 +701,6 @@ export default function ProductImageUploader({
       {/* Fotografías pendientes */}
       {selectedImages.length > 0 && (
         <div className="space-y-3">
-
           <h3 className="text-sm font-semibold text-slate-800">
             Fotografías pendientes de subir
           </h3>
@@ -636,8 +711,6 @@ export default function ProductImageUploader({
                 key={image.id}
                 className="overflow-hidden rounded-xl border border-slate-200 bg-white"
               >
-
-                {/* Vista previa */}
                 <div className="relative aspect-square bg-slate-100">
                   <Image
                     src={image.previewUrl}
@@ -650,7 +723,6 @@ export default function ProductImageUploader({
                 </div>
 
                 <div className="space-y-2 p-3">
-
                   <p
                     className="truncate text-xs text-slate-600"
                     title={image.file.name}
@@ -662,56 +734,45 @@ export default function ProductImageUploader({
                     Pendiente de guardar
                   </p>
 
-                  {/* Quitar imagen pendiente */}
                   <button
                     type="button"
                     disabled={isBusy}
                     onClick={() =>
-                      removeSelectedImage(
-                        image.id
-                      )
+                      removeSelectedImage(image.id)
                     }
                     className="w-full rounded-lg bg-red-50 px-2 py-2 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
                   >
                     Quitar
                   </button>
-
                 </div>
               </article>
             ))}
           </div>
 
-          {/* Subir imágenes */}
           <button
             type="button"
-            onClick={uploadImages}
             disabled={isBusy}
+            onClick={uploadImages}
             className="w-full rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isUploading
               ? "Subiendo fotografías..."
-              : `Subir ${
-                  selectedImages.length
-                } ${
+              : `Subir ${selectedImages.length} ${
                   selectedImages.length === 1
                     ? "fotografía"
                     : "fotografías"
                 }`}
           </button>
-
         </div>
       )}
 
-      {/* Información */}
       <p className="text-xs text-slate-500">
-        La primera fotografía subida se establece
-        automáticamente como principal.
-        Puedes cambiarla utilizando el botón
-        &quot;Hacer principal&quot;.
-        La eliminación y el ordenamiento de
-        fotografías se habilitarán posteriormente.
+        Utiliza Anterior y Siguiente para cambiar
+        el orden de las fotografías guardadas.
+        La imagen principal se administra por separado.
+        La eliminación de fotografías almacenadas
+        se habilitará posteriormente.
       </p>
-
     </section>
   );
 }

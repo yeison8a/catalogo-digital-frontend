@@ -357,3 +357,146 @@ export async function setMainProductImageAction(
     };
   }
 }
+
+
+/**
+ * Resultado de ordenar las fotografías.
+ */
+export type ReorderProductImagesResult =
+  | {
+      success: true;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+/**
+ * Guarda el nuevo orden de las fotografías
+ * mediante Spring Boot y PostgreSQL.
+ *
+ * imageIds debe contener todos los UUID
+ * de las fotografías en el orden deseado.
+ */
+export async function reorderProductImagesAction(
+  productId: string,
+  imageIds: string[]
+): Promise<ReorderProductImagesResult> {
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador del producto no es válido.",
+    };
+  }
+
+  if (
+    !Array.isArray(imageIds) ||
+    imageIds.length < 1 ||
+    imageIds.length > 5 ||
+    !imageIds.every(
+      (id) =>
+        typeof id === "string" &&
+        UUID_REGEX.test(id)
+    )
+  ) {
+    return {
+      success: false,
+      message:
+        "La lista de fotografías no es válida.",
+    };
+  }
+
+  // No podemos enviar identificadores repetidos.
+  if (
+    new Set(imageIds).size !== imageIds.length
+  ) {
+    return {
+      success: false,
+      message:
+        "La lista contiene fotografías repetidas.",
+    };
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}/images/order`,
+      {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          imageIds,
+        }),
+      }
+    );
+
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto o alguna fotografía no existe.",
+      };
+    }
+
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó el orden. Comprueba que se incluyan todas las fotografías del producto.",
+      };
+    }
+
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No se pudo cambiar el orden por una restricción del backend.",
+      };
+    }
+
+    if (!response.ok) {
+      console.error(
+        "Error HTTP al ordenar fotografías:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible guardar el nuevo orden.",
+      };
+    }
+
+    // El backend confirmó que la operación
+    // se completó correctamente.
+    return {
+      success: true,
+    };
+  } catch (error) {
+    console.error(
+      "Error de conexión al ordenar fotografías:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo confirmar el orden. Recarga la página y comprueba las fotografías antes de reintentar.",
+    };
+  }
+}
