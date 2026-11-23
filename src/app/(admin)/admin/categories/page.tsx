@@ -68,11 +68,6 @@ async function AdminCategoriesContent() {
         ))
       )}
 
-      <p className="text-sm text-slate-500">
-        La creación, edición y activación de categorías
-        se habilitarán cuando conectemos los formularios
-        con Spring Boot.
-      </p>
     </section>
   );
 }
