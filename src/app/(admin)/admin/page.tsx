@@ -1,21 +1,39 @@
 
+import { Suspense } from "react";
 import Link from "next/link";
 
-import { mockProducts } from "@/mocks/products";
-import { mockCategories } from "@/mocks/categories";
+import { getAdminProducts } from "@/lib/adminProductApi";
+import { getAdminCategories } from "@/lib/adminCategoryApi";
 
-export default function AdminDashboardPage() {
-  const totalProducts = mockProducts.length;
+/**
+ * Dashboard conectado con Spring Boot.
+ *
+ * Los indicadores se calculan usando
+ * información real de PostgreSQL.
+ */
+async function AdminDashboardContent() {
+  // Consultar productos y categorías en paralelo.
+  const [products, categories] = await Promise.all([
+    getAdminProducts(),
+    getAdminCategories(),
+  ]);
 
-  const availableProducts = mockProducts.filter(
+  // Total de productos registrados.
+  const totalProducts = products.length;
+
+  // Productos disponibles.
+  const availableProducts = products.filter(
     (product) => product.available
   ).length;
 
+  // Productos agotados o no disponibles.
   const unavailableProducts =
     totalProducts - availableProducts;
 
-  const totalCategories = mockCategories.length;
+  // Total de categorías registradas.
+  const totalCategories = categories.length;
 
+  // Indicadores del dashboard.
   const stats = [
     {
       title: "Total de productos",
@@ -124,5 +142,27 @@ export default function AdminDashboardPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * Suspense permite realizar las consultas
+ * dinámicas sin interferir con la configuración
+ * cacheComponents de Next.js.
+ */
+export default function AdminDashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          role="status"
+          className="py-12 text-center text-sm text-slate-600"
+        >
+          Cargando información del catálogo...
+        </div>
+      }
+    >
+      <AdminDashboardContent />
+    </Suspense>
   );
 }
