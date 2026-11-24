@@ -5,35 +5,56 @@ import Link from "next/link";
 import { getAdminProducts } from "@/lib/adminProductApi";
 import { getAdminCategories } from "@/lib/adminCategoryApi";
 
+import {
+  requireAdminSession,
+} from "@/lib/auth/require-admin-session";
+
 /**
  * Dashboard conectado con Spring Boot.
  *
  * Los indicadores se calculan usando
  * información real de PostgreSQL.
+ *
+ * Antes de realizar cualquier consulta,
+ * comprobamos que el administrador tenga
+ * una sesión válida y autorizada.
  */
 async function AdminDashboardContent() {
-  // Consultar productos y categorías en paralelo.
+
+  // 1. Verificar la sesión del administrador.
+  //
+  // Si no existe sesión o Spring Boot rechaza
+  // el JWT, Next.js redirige a /admin/login.
+  //
+  // Esta verificación ocurre antes de consultar
+  // productos y categorías.
+  await requireAdminSession();
+
+  // 2. Consultar productos y categorías en paralelo.
+  //
+  // Solamente llegamos aquí cuando la sesión
+  // ha sido autorizada por Spring Boot.
   const [products, categories] = await Promise.all([
     getAdminProducts(),
     getAdminCategories(),
   ]);
 
-  // Total de productos registrados.
+  // 3. Total de productos registrados.
   const totalProducts = products.length;
 
-  // Productos disponibles.
+  // 4. Productos disponibles.
   const availableProducts = products.filter(
     (product) => product.available
   ).length;
 
-  // Productos agotados o no disponibles.
+  // 5. Productos agotados o no disponibles.
   const unavailableProducts =
     totalProducts - availableProducts;
 
-  // Total de categorías registradas.
+  // 6. Total de categorías registradas.
   const totalCategories = categories.length;
 
-  // Indicadores del dashboard.
+  // 7. Indicadores del dashboard.
   const stats = [
     {
       title: "Total de productos",
@@ -149,6 +170,9 @@ async function AdminDashboardContent() {
  * Suspense permite realizar las consultas
  * dinámicas sin interferir con la configuración
  * cacheComponents de Next.js.
+ *
+ * La validación de sesión también se ejecuta
+ * dentro del componente asíncrono.
  */
 export default function AdminDashboardPage() {
   return (
