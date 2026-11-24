@@ -1,6 +1,10 @@
 
 "use server";
 
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
 const API_BASE_URL =
   process.env.API_BASE_URL ??
   "http://127.0.0.1:8080/api/v1";
@@ -15,6 +19,15 @@ const ALLOWED_TYPES = [
   "image/png",
 ];
 
+const SESSION_REQUIRED_MESSAGE =
+  "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.";
+
+const SESSION_UNAUTHORIZED_MESSAGE =
+  "Tu sesión no está autorizada. Inicia sesión nuevamente.";
+
+/**
+ * Resultado de subir una fotografía.
+ */
 export type UploadProductImageResult =
   | {
       success: true;
@@ -63,14 +76,16 @@ function isImageResponse(
  * Flujo:
  * Next.js -> Spring Boot -> Cloudinary
  *                         -> PostgreSQL
+ *
+ * La solicitud exige JWT administrativo.
  */
 export async function uploadProductImageAction(
   productId: string,
   formData: FormData
 ): Promise<UploadProductImageResult> {
 
-  // Restricción temporal mientras
-  // implementamos autenticación.
+  // 1. Conservar la restricción temporal
+  // del entorno de desarrollo.
   if (process.env.NODE_ENV !== "development") {
     return {
       success: false,
@@ -79,7 +94,17 @@ export async function uploadProductImageAction(
     };
   }
 
-  // Validar el UUID del producto.
+  // 2. Recuperar el JWT desde la cookie HttpOnly.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID del producto.
   if (
     typeof productId !== "string" ||
     !UUID_REGEX.test(productId)
@@ -91,7 +116,16 @@ export async function uploadProductImageAction(
     };
   }
 
-  // Recuperar el campo que espera Spring Boot.
+  // 4. Validar el contenido recibido.
+  if (!(formData instanceof FormData)) {
+    return {
+      success: false,
+      message:
+        "Debes seleccionar una fotografía válida.",
+    };
+  }
+
+  // Recuperar el campo esperado por Spring Boot.
   const value = formData.get("file");
 
   if (!(value instanceof File)) {
@@ -102,7 +136,7 @@ export async function uploadProductImageAction(
     };
   }
 
-  // Validar que el archivo no esté vacío.
+  // No permitir archivos vacíos.
   if (value.size === 0) {
     return {
       success: false,
@@ -111,7 +145,7 @@ export async function uploadProductImageAction(
     };
   }
 
-  // Validar formatos.
+  // Validar JPG o PNG.
   if (!ALLOWED_TYPES.includes(value.type)) {
     return {
       success: false,
@@ -130,7 +164,8 @@ export async function uploadProductImageAction(
   }
 
   try {
-    // Preparar multipart/form-data.
+
+    // 5. Preparar multipart/form-data.
     const uploadData = new FormData();
 
     uploadData.append(
@@ -139,7 +174,8 @@ export async function uploadProductImageAction(
       value.name
     );
 
-    // Enviar el archivo a Spring Boot.
+    // 6. Enviar fotografía a Spring Boot
+    // con autorización JWT.
     const response = await fetch(
       `${API_BASE_URL}/admin/products/${productId}/images/upload`,
       {
@@ -147,10 +183,25 @@ export async function uploadProductImageAction(
         cache: "no-store",
         headers: {
           Accept: "application/json",
+          Authorization: `Bearer ${token}`,
         },
         body: uploadData,
       }
     );
+
+    // No agregar Content-Type manualmente:
+    // fetch genera el boundary de multipart.
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
 
     // Producto inexistente.
     if (response.status === 404) {
@@ -201,7 +252,7 @@ export async function uploadProductImageAction(
       };
     }
 
-    // Spring Boot responde con ProductImageResponse.
+    // 7. Confirmar la respuesta de Spring Boot.
     const image: unknown = await response.json();
 
     if (!isImageResponse(image)) {
@@ -232,7 +283,6 @@ export async function uploadProductImageAction(
   }
 }
 
-
 /**
  * Resultado de seleccionar una fotografía principal.
  */
@@ -256,7 +306,7 @@ export async function setMainProductImageAction(
   imageId: string
 ): Promise<SetMainProductImageResult> {
 
-  // Restricción temporal para desarrollo local.
+  // 1. Mantener restricción de desarrollo.
   if (process.env.NODE_ENV !== "development") {
     return {
       success: false,
@@ -265,7 +315,17 @@ export async function setMainProductImageAction(
     };
   }
 
-  // Validar UUID del producto.
+  // 2. Obtener JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID del producto.
   if (
     typeof productId !== "string" ||
     !UUID_REGEX.test(productId)
@@ -277,7 +337,7 @@ export async function setMainProductImageAction(
     };
   }
 
-  // Validar UUID de la fotografía.
+  // 4. Validar UUID de la fotografía.
   if (
     typeof imageId !== "string" ||
     !UUID_REGEX.test(imageId)
@@ -290,6 +350,8 @@ export async function setMainProductImageAction(
   }
 
   try {
+
+    // 5. Enviar PUT autenticado.
     const response = await fetch(
       `${API_BASE_URL}/admin/products/${productId}/images/${imageId}/main`,
       {
@@ -297,9 +359,21 @@ export async function setMainProductImageAction(
         cache: "no-store",
         headers: {
           Accept: "application/json",
+          Authorization: `Bearer ${token}`,
         },
       }
     );
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
 
     if (response.status === 404) {
       return {
@@ -358,7 +432,6 @@ export async function setMainProductImageAction(
   }
 }
 
-
 /**
  * Resultado de ordenar las fotografías.
  */
@@ -382,6 +455,8 @@ export async function reorderProductImagesAction(
   productId: string,
   imageIds: string[]
 ): Promise<ReorderProductImagesResult> {
+
+  // 1. Mantener restricción de desarrollo.
   if (process.env.NODE_ENV !== "development") {
     return {
       success: false,
@@ -390,6 +465,17 @@ export async function reorderProductImagesAction(
     };
   }
 
+  // 2. Obtener JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID del producto.
   if (
     typeof productId !== "string" ||
     !UUID_REGEX.test(productId)
@@ -401,6 +487,7 @@ export async function reorderProductImagesAction(
     };
   }
 
+  // 4. Validar lista de imágenes.
   if (
     !Array.isArray(imageIds) ||
     imageIds.length < 1 ||
@@ -418,7 +505,7 @@ export async function reorderProductImagesAction(
     };
   }
 
-  // No podemos enviar identificadores repetidos.
+  // No permitir UUID repetidos.
   if (
     new Set(imageIds).size !== imageIds.length
   ) {
@@ -430,6 +517,8 @@ export async function reorderProductImagesAction(
   }
 
   try {
+
+    // 5. Enviar PUT autenticado.
     const response = await fetch(
       `${API_BASE_URL}/admin/products/${productId}/images/order`,
       {
@@ -438,12 +527,24 @@ export async function reorderProductImagesAction(
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           imageIds,
         }),
       }
     );
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
 
     if (response.status === 404) {
       return {
@@ -487,6 +588,7 @@ export async function reorderProductImagesAction(
     return {
       success: true,
     };
+
   } catch (error) {
     console.error(
       "Error de conexión al ordenar fotografías:",
@@ -500,7 +602,6 @@ export async function reorderProductImagesAction(
     };
   }
 }
-
 
 /**
  * Resultado de solicitar la eliminación
@@ -526,6 +627,8 @@ export async function deleteProductImageAction(
   productId: string,
   imageId: string
 ): Promise<DeleteProductImageResult> {
+
+  // 1. Mantener restricción de desarrollo.
   if (process.env.NODE_ENV !== "development") {
     return {
       success: false,
@@ -534,6 +637,17 @@ export async function deleteProductImageAction(
     };
   }
 
+  // 2. Obtener JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID del producto.
   if (
     typeof productId !== "string" ||
     !UUID_REGEX.test(productId)
@@ -545,6 +659,7 @@ export async function deleteProductImageAction(
     };
   }
 
+  // 4. Validar UUID de la fotografía.
   if (
     typeof imageId !== "string" ||
     !UUID_REGEX.test(imageId)
@@ -557,6 +672,8 @@ export async function deleteProductImageAction(
   }
 
   try {
+
+    // 5. Enviar DELETE autenticado.
     const response = await fetch(
       `${API_BASE_URL}/admin/products/${productId}/images/${imageId}`,
       {
@@ -564,9 +681,21 @@ export async function deleteProductImageAction(
         cache: "no-store",
         headers: {
           Accept: "application/json",
+          Authorization: `Bearer ${token}`,
         },
       }
     );
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
 
     if (response.status === 404) {
       return {
@@ -605,13 +734,15 @@ export async function deleteProductImageAction(
       };
     }
 
-    // HTTP 202 significa que la solicitud
-    // fue aceptada para su procesamiento.
-    // No significa que Cloudinary haya
-    // completado el borrado físico.
+    // HTTP 202 significa que la solicitud fue
+    // aceptada para su procesamiento.
+    //
+    // No significa que Cloudinary haya completado
+    // el borrado físico de la fotografía.
     return {
       success: true,
     };
+
   } catch (error) {
     console.error(
       "Error solicitando eliminación:",

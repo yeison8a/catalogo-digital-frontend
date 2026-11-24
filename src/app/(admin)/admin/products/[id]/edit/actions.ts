@@ -5,6 +5,10 @@ import type {
   CreateProductInput,
 } from "@/app/(admin)/admin/products/new/actions";
 
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
 const API_BASE_URL =
   process.env.API_BASE_URL ??
   "http://127.0.0.1:8080/api/v1";
@@ -12,6 +16,9 @@ const API_BASE_URL =
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Resultado de actualizar un producto.
+ */
 export type UpdateProductResult =
   | {
       success: true;
@@ -26,14 +33,21 @@ export type UpdateProductResult =
  * Actualiza los datos de un producto existente.
  *
  * Spring Boot conserva el UUID original.
+ *
+ * Flujo:
+ * 1. Verificar el entorno permitido.
+ * 2. Recuperar el JWT administrativo.
+ * 3. Validar UUID y datos del producto.
+ * 4. Enviar PUT autenticado a Spring Boot.
+ * 5. Comprobar la respuesta del backend.
  */
 export async function updateProductAction(
   productId: string,
   input: CreateProductInput
 ): Promise<UpdateProductResult> {
 
-  // El administrador todavía no tiene autenticación.
-  // Restringir las operaciones a desarrollo local.
+  // 1. Mantener la restricción temporal
+  // del panel en desarrollo local.
   if (process.env.NODE_ENV !== "development") {
     return {
       success: false,
@@ -42,16 +56,31 @@ export async function updateProductAction(
     };
   }
 
+  // 2. Recuperar JWT desde la cookie HttpOnly.
+  const token = await getAdminMutationToken();
+
+  // Impedir operaciones sin sesión.
+  if (!token) {
+    return {
+      success: false,
+      message:
+        "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.",
+    };
+  }
+
+  // 3. Validar identificador del producto.
   if (
     typeof productId !== "string" ||
     !UUID_REGEX.test(productId)
   ) {
     return {
       success: false,
-      message: "El identificador del producto no es válido.",
+      message:
+        "El identificador del producto no es válido.",
     };
   }
 
+  // Validar estructura del producto.
   if (
     !input ||
     typeof input.name !== "string" ||
@@ -69,6 +98,7 @@ export async function updateProductAction(
   const description = input.description.trim();
   const categoryId = input.categoryId.trim();
 
+  // Validar nombre.
   if (name.length < 2 || name.length > 150) {
     return {
       success: false,
@@ -77,6 +107,7 @@ export async function updateProductAction(
     };
   }
 
+  // Validar descripción.
   if (description.length > 2000) {
     return {
       success: false,
@@ -85,6 +116,7 @@ export async function updateProductAction(
     };
   }
 
+  // Validar precio en pesos colombianos.
   if (
     !Number.isFinite(input.price) ||
     !Number.isInteger(input.price) ||
@@ -98,14 +130,18 @@ export async function updateProductAction(
     };
   }
 
+  // Validar identificador de categoría.
   if (!UUID_REGEX.test(categoryId)) {
     return {
       success: false,
-      message: "Selecciona una categoría válida.",
+      message:
+        "Selecciona una categoría válida.",
     };
   }
 
   try {
+
+    // 4. Enviar la actualización autenticada.
     const response = await fetch(
       `${API_BASE_URL}/admin/products/${productId}`,
       {
@@ -114,6 +150,7 @@ export async function updateProductAction(
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           name,
@@ -124,13 +161,28 @@ export async function updateProductAction(
       }
     );
 
-    if (response.status === 404) {
+    // JWT vencido, inválido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
       return {
         success: false,
-        message: "El producto ya no existe.",
+        message:
+          "Tu sesión no está autorizada. Inicia sesión nuevamente.",
       };
     }
 
+    // Producto inexistente.
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto ya no existe.",
+      };
+    }
+
+    // Datos rechazados por Spring Boot.
     if (response.status === 400) {
       return {
         success: false,
@@ -139,6 +191,7 @@ export async function updateProductAction(
       };
     }
 
+    // Conflicto con reglas de negocio.
     if (response.status === 409) {
       return {
         success: false,
@@ -147,6 +200,7 @@ export async function updateProductAction(
       };
     }
 
+    // Otros errores HTTP.
     if (!response.ok) {
       console.error(
         "Error actualizando producto:",
@@ -160,7 +214,7 @@ export async function updateProductAction(
       };
     }
 
-    // Confirmar la respuesta real del backend.
+    // 5. Confirmar la respuesta real del backend.
     const updatedProduct: unknown =
       await response.json();
 
@@ -177,6 +231,7 @@ export async function updateProductAction(
       };
     }
 
+    // Actualización confirmada.
     return {
       success: true,
       productId,

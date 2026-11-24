@@ -23,7 +23,6 @@ type AvailabilityFilter =
 export default function AdminProductList({
   products,
 }: AdminProductListProps) {
-
   // Estado del buscador.
   const [search, setSearch] = useState("");
 
@@ -72,10 +71,8 @@ export default function AdminProductList({
 
   return (
     <section className="space-y-6">
-
       {/* Encabezado */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-
         <div>
           <h2 className="text-lg font-semibold text-slate-900">
             Productos registrados
@@ -89,19 +86,17 @@ export default function AdminProductList({
           </p>
         </div>
 
-        {/* La creación se conectará en el paso 44.4 */}
+        {/* Crear un producto administrativo */}
         <Link
-  href="/admin/products/new"
-  className="inline-flex min-h-11 items-center justify-center rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
->
-  + Nuevo producto
-</Link>
-
+          href="/admin/products/new"
+          className="inline-flex min-h-11 items-center justify-center rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+        >
+          + Nuevo producto
+        </Link>
       </div>
 
       {/* Buscador y filtro */}
       <div className="flex flex-col gap-3 sm:flex-row">
-
         <input
           type="search"
           value={search}
@@ -127,12 +122,10 @@ export default function AdminProductList({
           <option value="available">Disponibles</option>
           <option value="unavailable">Agotados</option>
         </select>
-
       </div>
 
       {/* Contador y limpieza de filtros */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-
         <p
           className="text-sm text-slate-500"
           role="status"
@@ -153,14 +146,11 @@ export default function AdminProductList({
             Limpiar filtros
           </button>
         )}
-
       </div>
 
       {/* Listado real de productos */}
       {filteredProducts.length === 0 ? (
-
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
-
           <h3 className="font-semibold text-slate-900">
             No se encontraron productos
           </h3>
@@ -180,23 +170,16 @@ export default function AdminProductList({
               Mostrar todos los productos
             </button>
           )}
-
         </div>
-
       ) : (
-
         <div className="space-y-3">
-
           {filteredProducts.map((product) => (
-
             <article
               key={product.id}
               className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"
             >
-
               {/* Información del producto */}
               <div className="min-w-0 flex-1">
-
                 <h3 className="break-words font-semibold text-slate-900">
                   {product.name}
                 </h3>
@@ -221,37 +204,35 @@ export default function AdminProductList({
                     ? "Disponible"
                     : "Agotado"}
                 </span>
-
               </div>
 
-              
-{/* Controles reales de disponibilidad y publicación */}
-<div className="w-full space-y-3 border-t border-slate-100 pt-3 sm:w-48 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+              {/* Controles administrativos */}
+              <div className="w-full space-y-3 border-t border-slate-100 pt-3 sm:w-48 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+                <ProductStatusControls product={product} />
 
-  <ProductStatusControls product={product} />
-
-  {/* Estado de publicación */}
-  <span
-    className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${
-      product.active
-        ? "bg-blue-50 text-blue-700"
-        : "bg-slate-100 text-slate-600"
-    }`}
-  >
-    {product.active
-      ? "Publicado"
-      : "Oculto"}
-  </span>
-
-</div>
-
+                {/* Estado de publicación */}
+                <span
+                  className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${
+                    product.active
+                      ? "bg-blue-50 text-blue-700"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {product.active
+                    ? "Publicado"
+                    : "Oculto"}
+                </span>
+              </div>
 
               {/* Acciones */}
               <div className="flex flex-wrap items-center gap-2">
-
                 {product.active && product.category.active ? (
                   <Link
                     href={`/products/${product.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Ver ${product.name} en una pestaña nueva`}
+                    title="Abrir producto en una pestaña nueva"
                     className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
                   >
                     Ver
@@ -265,24 +246,18 @@ export default function AdminProductList({
                   </span>
                 )}
 
-                {/* Edición pendiente de integración */}
+                {/* Editar dentro del panel administrativo */}
                 <Link
-  href={`/admin/products/${product.id}/edit`}
-  className="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
->
-  Editar
-</Link>
-
+                  href={`/admin/products/${product.id}/edit`}
+                  className="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                >
+                  Editar
+                </Link>
               </div>
-
             </article>
-
           ))}
-
         </div>
-
       )}
-
     </section>
   );
 }

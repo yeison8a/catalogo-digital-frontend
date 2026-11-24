@@ -1,6 +1,10 @@
 
 "use server";
 
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
 const API_BASE_URL =
   process.env.API_BASE_URL ??
   "http://127.0.0.1:8080/api/v1";
@@ -35,16 +39,22 @@ const UUID_REGEX =
 /**
  * Crea un producto real mediante Spring Boot.
  *
- * Esta operación se utiliza solamente en
- * el entorno de desarrollo local.
+ * Flujo:
+ * 1. Comprobar el entorno.
+ * 2. Recuperar el JWT de la cookie HttpOnly.
+ * 3. Validar los datos recibidos.
+ * 4. Enviar la petición autenticada.
+ * 5. Confirmar el UUID generado.
+ *
+ * Spring Boot valida el JWT, el rol ADMIN
+ * y el estado del administrador.
  */
 export async function createProductAction(
   input: CreateProductInput
 ): Promise<CreateProductResult> {
 
-  // Todavía no tenemos autenticación.
-  // Impedir operaciones administrativas
-  // desde una compilación de producción.
+  // 1. Conservar la restricción temporal
+  // del entorno de desarrollo local.
   if (process.env.NODE_ENV !== "development") {
     return {
       success: false,
@@ -53,7 +63,19 @@ export async function createProductAction(
     };
   }
 
-  // Validar que los datos sean correctos.
+  // 2. Recuperar el JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  // Rechazar operaciones sin sesión.
+  if (!token) {
+    return {
+      success: false,
+      message:
+        "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.",
+    };
+  }
+
+  // 3. Validar la estructura de los datos.
   if (
     !input ||
     typeof input.name !== "string" ||
@@ -89,7 +111,7 @@ export async function createProductAction(
     };
   }
 
-  // Validar precio.
+  // Validar precio en pesos colombianos.
   if (
     !Number.isFinite(input.price) ||
     input.price < 0 ||
@@ -114,7 +136,8 @@ export async function createProductAction(
 
   try {
 
-    // Enviar el producto a Spring Boot.
+    // 4. Enviar el producto a Spring Boot
+    // utilizando la sesión administrativa.
     const response = await fetch(
       `${API_BASE_URL}/admin/products`,
       {
@@ -123,6 +146,7 @@ export async function createProductAction(
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           name,
@@ -133,6 +157,18 @@ export async function createProductAction(
       }
     );
 
+    // Sesión vencida o usuario no autorizado.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message:
+          "Tu sesión no está autorizada. Inicia sesión nuevamente.",
+      };
+    }
+
     // Categoría inexistente o inválida.
     if (response.status === 404) {
       return {
@@ -142,7 +178,7 @@ export async function createProductAction(
       };
     }
 
-    // Datos rechazados por el backend.
+    // Datos rechazados por Spring Boot.
     if (response.status === 400) {
       return {
         success: false,
@@ -174,7 +210,7 @@ export async function createProductAction(
       };
     }
 
-    // Obtener el UUID real generado
+    // 5. Obtener el UUID real generado
     // por Spring Boot.
     const product: unknown = await response.json();
 
@@ -192,6 +228,7 @@ export async function createProductAction(
       };
     }
 
+    // Producto guardado y confirmado.
     return {
       success: true,
       productId: product.id,

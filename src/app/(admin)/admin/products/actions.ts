@@ -1,11 +1,16 @@
 
 "use server";
 
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
 const API_BASE_URL =
   process.env.API_BASE_URL ??
   "http://127.0.0.1:8080/api/v1";
 
-const UUID_REGEX = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const UUID_REGEX =
+  /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 export type ProductStatusResult =
   | { success: true }
@@ -23,6 +28,9 @@ interface ProductStatusResponse {
  * Función interna para actualizar un estado.
  *
  * No se exporta como Server Action.
+ *
+ * Exige JWT antes de realizar cualquier
+ * modificación en Spring Boot.
  */
 async function updateStatus(
   productId: string,
@@ -30,8 +38,8 @@ async function updateStatus(
   value: boolean
 ): Promise<ProductStatusResult> {
 
-  // El administrador todavía no tiene autenticación.
-  // Solo permitimos cambios en desarrollo local.
+  // Mantener la restricción actual
+  // del backend de desarrollo local.
   if (process.env.NODE_ENV !== "development") {
     return {
       success: false,
@@ -40,6 +48,19 @@ async function updateStatus(
     };
   }
 
+  // Recuperar la sesión del administrador.
+  const token = await getAdminMutationToken();
+
+  // No permitir modificaciones sin sesión.
+  if (!token) {
+    return {
+      success: false,
+      message:
+        "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.",
+    };
+  }
+
+  // Validar identificador.
   if (
     typeof productId !== "string" ||
     !UUID_REGEX.test(productId)
@@ -50,6 +71,7 @@ async function updateStatus(
     };
   }
 
+  // Validar estado.
   if (typeof value !== "boolean") {
     return {
       success: false,
@@ -63,6 +85,8 @@ async function updateStatus(
       : "availability";
 
   try {
+    // Enviar la modificación autenticada
+    // al backend Spring Boot.
     const response = await fetch(
       `${API_BASE_URL}/admin/products/${productId}/${endpoint}`,
       {
@@ -71,6 +95,7 @@ async function updateStatus(
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           [field]: value,
@@ -78,6 +103,19 @@ async function updateStatus(
       }
     );
 
+    // Sesión vencida o token rechazado.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message:
+          "Tu sesión no está autorizada. Inicia sesión nuevamente.",
+      };
+    }
+
+    // Producto inexistente.
     if (response.status === 404) {
       return {
         success: false,
@@ -85,6 +123,7 @@ async function updateStatus(
       };
     }
 
+    // Solicitud inválida.
     if (response.status === 400) {
       return {
         success: false,
@@ -93,6 +132,7 @@ async function updateStatus(
       };
     }
 
+    // Conflicto con las reglas del backend.
     if (response.status === 409) {
       return {
         success: false,
@@ -120,7 +160,8 @@ async function updateStatus(
       await response.json();
 
     if (
-      updated.id.toLowerCase() !== productId.toLowerCase() ||
+      updated.id.toLowerCase() !==
+        productId.toLowerCase() ||
       updated[field] !== value
     ) {
       return {
@@ -153,6 +194,7 @@ export async function updateProductPublicationAction(
   productId: string,
   active: boolean
 ): Promise<ProductStatusResult> {
+
   return updateStatus(
     productId,
     "active",
@@ -161,12 +203,14 @@ export async function updateProductPublicationAction(
 }
 
 /**
- * Marcar un producto como disponible o agotado.
+ * Marcar un producto como disponible
+ * o agotado.
  */
 export async function updateProductAvailabilityAction(
   productId: string,
   available: boolean
 ): Promise<ProductStatusResult> {
+
   return updateStatus(
     productId,
     "available",
