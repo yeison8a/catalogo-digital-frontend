@@ -7,11 +7,25 @@ import { getAdminProducts } from "@/lib/adminProductApi";
 import { getAdminCategories } from "@/lib/adminCategoryApi";
 import { toUiProducts } from "@/lib/productAdapter";
 
+import {
+  requireAdminSession,
+} from "@/lib/auth/require-admin-session";
+
 /**
  * Consulta los productos y categorías reales
  * de PostgreSQL mediante Spring Boot.
+ *
+ * Antes de recuperar información administrativa,
+ * verificamos que el usuario tenga una sesión
+ * válida y autorizada.
  */
 async function AdminProductsContent() {
+  // Verificar la sesión antes de consultar datos.
+  // Si la sesión es inválida, Next.js redirige
+  // al administrador hacia /admin/login.
+  await requireAdminSession();
+
+  // Consultar productos y categorías en paralelo.
   const [apiProducts, apiCategories] =
     await Promise.all([
       getAdminProducts(),
@@ -30,11 +44,14 @@ async function AdminProductsContent() {
 
 /**
  * Página administrativa de productos.
+ *
+ * Conserva el diseño, los componentes y
+ * la carga mediante Suspense.
  */
 export default function AdminProductsPage() {
   return (
     <div className="space-y-6">
-
+      {/* Encabezado */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
           Gestión de productos
@@ -46,10 +63,10 @@ export default function AdminProductsPage() {
         </p>
       </div>
 
+      {/* Listado protegido de productos */}
       <Suspense
         fallback={
           <div className="space-y-4">
-
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <p className="font-medium text-slate-800">
                 Cargando productos...
@@ -60,6 +77,7 @@ export default function AdminProductsPage() {
               </p>
             </div>
 
+            {/* Elementos de carga */}
             {[1, 2, 3].map((item) => (
               <div
                 key={item}
@@ -70,13 +88,11 @@ export default function AdminProductsPage() {
                 <div className="mt-4 h-6 w-24 rounded bg-slate-200" />
               </div>
             ))}
-
           </div>
         }
       >
         <AdminProductsContent />
       </Suspense>
-
     </div>
   );
 }

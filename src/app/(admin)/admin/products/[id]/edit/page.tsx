@@ -15,6 +15,11 @@ import { getProductImages } from "@/lib/productImagesApi";
 
 import { toUiProduct } from "@/lib/productAdapter";
 
+import {
+  requireAdminSession,
+} from "@/lib/auth/require-admin-session";
+
+
 interface EditProductPageProps {
   params: Promise<{ id: string }>;
 }
@@ -26,8 +31,16 @@ interface EditProductPageProps {
 async function EditProductContent({
   params,
 }: EditProductPageProps) {
+
+  // 1. Verificar la sesión antes de consultar
+  // información administrativa.
+  await requireAdminSession();
+
+  // 2. Obtener el UUID desde la ruta.
   const { id } = await params;
 
+  // 3. Consultar el producto, las categorías
+  // y las fotografías existentes.
   const [
     apiProduct,
     categories,

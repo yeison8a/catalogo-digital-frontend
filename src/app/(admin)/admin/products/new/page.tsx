@@ -5,15 +5,22 @@ import Link from "next/link";
 import ProductForm from "@/components/admin/ProductForm";
 import { getAdminCategories } from "@/lib/adminCategoryApi";
 
-/**
- * Obtiene las categorías administrativas reales
- * y las entrega al formulario.
- */
+import {
+  requireAdminSession,
+} from "@/lib/auth/require-admin-session";
+
 async function NewProductContent() {
+
+  // Validar sesión administrativa.
+  await requireAdminSession();
+
+  // Consultar categorías reales.
   const categories = await getAdminCategories();
 
+  // Conservar el formulario existente.
   return <ProductForm categories={categories} />;
 }
+
 
 export default function NewProductPage() {
   return (
