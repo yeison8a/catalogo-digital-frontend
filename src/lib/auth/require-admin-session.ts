@@ -13,26 +13,42 @@ const API_BASE_URL = (
 ).replace(/\/+$/, "");
 
 /**
- * Comprueba que exista una sesión administrativa
- * y que Spring Boot acepte su JWT.
+ * Redirige al login cuando Spring Boot
+ * rechaza la autenticación o autorización.
  *
- * No devuelve el token a componentes del navegador.
+ * Puede reutilizarse desde clientes HTTP
+ * ejecutados exclusivamente en el servidor.
+ */
+export function redirectIfAdminUnauthorized(
+  status: number
+): void {
+  if (status === 401 || status === 403) {
+    redirect("/admin/login");
+  }
+}
+
+/**
+ * Verifica que el administrador tenga
+ * una sesión válida y autorizada.
  *
- * Si la sesión no existe, venció o fue rechazada,
- * redirige al formulario de inicio de sesión.
+ * Si falta la cookie o Spring Boot rechaza
+ * el JWT, redirige a /admin/login.
+ *
+ * Los errores de conexión o los errores 5xx
+ * no se confunden con sesiones vencidas.
  */
 export async function requireAdminSession():
   Promise<void> {
 
-  // 1. Leer la cookie HttpOnly en Next.js.
+  // Recuperar JWT desde la cookie HttpOnly.
   const token = await getAdminSessionToken();
 
+  // No existe una sesión administrativa.
   if (!token) {
     redirect("/admin/login");
   }
 
-  // 2. Verificar el JWT contra una ruta protegida
-  // de Spring Boot.
+  // Consultar un endpoint protegido.
   const response = await fetch(
     `${API_BASE_URL}/admin/products`,
     {
@@ -46,23 +62,13 @@ export async function requireAdminSession():
     }
   );
 
-  // 3. Token inválido, vencido, cuenta desactivada
-  // o usuario sin autorización.
-  if (
-    response.status === 401 ||
-    response.status === 403
-  ) {
-    redirect("/admin/login");
-  }
+  // Rechazar JWT inválido, vencido o sin permisos.
+  redirectIfAdminUnauthorized(response.status);
 
-  // 4. No confundir una falla del servidor con
-  // una sesión inválida.
+  // No ocultar problemas reales del backend.
   if (!response.ok) {
     throw new Error(
       "No fue posible verificar la sesión administrativa."
     );
   }
-
-  // 5. Spring Boot autorizó la petición.
-  // No necesitamos devolver los datos consultados.
 }

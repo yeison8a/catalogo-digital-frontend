@@ -7,14 +7,18 @@ import {
   getAdminSessionToken,
 } from "@/lib/auth/admin-session";
 
+import {
+  redirectIfAdminUnauthorized,
+} from "@/lib/auth/require-admin-session";
+
 const API_BASE_URL = (
   process.env.API_BASE_URL ??
   "http://127.0.0.1:8080/api/v1"
 ).replace(/\/+$/, "");
 
 /**
- * Error específico de la API administrativa
- * de categorías de Spring Boot.
+ * Error específico de las consultas
+ * administrativas de categorías.
  */
 export class AdminCategoryApiError extends Error {
   constructor(
@@ -30,28 +34,25 @@ export class AdminCategoryApiError extends Error {
 }
 
 /**
- * Cliente HTTP autenticado para consultas
- * administrativas de categorías.
+ * Cliente GET autenticado para categorías.
  *
- * Se ejecuta exclusivamente en el servidor
- * de Next.js.
+ * Recupera JWT desde la cookie HttpOnly
+ * y lo envía a Spring Boot.
  */
 async function adminGet<T>(
   endpoint: string
 ): Promise<T> {
 
-  // Obtener JWT desde la cookie HttpOnly.
+  // 1. Recuperar la sesión administrativa.
   const token = await getAdminSessionToken();
 
-  // Rechazar solicitudes sin sesión.
+  // 2. Rechazar consultas sin sesión.
   if (!token) {
-    throw new AdminCategoryApiError(
-      401,
-      endpoint
-    );
+    redirectIfAdminUnauthorized(401);
+    throw new AdminCategoryApiError(401, endpoint);
   }
 
-  // Consultar Spring Boot con JWT.
+  // 3. Consultar Spring Boot.
   const response = await fetch(
     `${API_BASE_URL}${endpoint}`,
     {
@@ -64,8 +65,10 @@ async function adminGet<T>(
     }
   );
 
-  // Spring Boot valida firma, vencimiento,
-  // rol ADMIN y estado del usuario.
+  // 4. Gestionar sesiones rechazadas.
+  redirectIfAdminUnauthorized(response.status);
+
+  // 5. Mantener el tratamiento de errores HTTP.
   if (!response.ok) {
     throw new AdminCategoryApiError(
       response.status,
@@ -73,6 +76,7 @@ async function adminGet<T>(
     );
   }
 
+  // 6. Devolver categorías reales.
   return (await response.json()) as T;
 }
 
