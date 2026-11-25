@@ -84,15 +84,6 @@ export async function uploadProductImageAction(
   formData: FormData
 ): Promise<UploadProductImageResult> {
 
-  // 1. Conservar la restricción temporal
-  // del entorno de desarrollo.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message:
-        "La administración solo está habilitada en desarrollo local.",
-    };
-  }
 
   // 2. Recuperar el JWT desde la cookie HttpOnly.
   const token = await getAdminMutationToken();
@@ -306,14 +297,6 @@ export async function setMainProductImageAction(
   imageId: string
 ): Promise<SetMainProductImageResult> {
 
-  // 1. Mantener restricción de desarrollo.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message:
-        "La administración solo está habilitada en desarrollo local.",
-    };
-  }
 
   // 2. Obtener JWT administrativo.
   const token = await getAdminMutationToken();
@@ -456,14 +439,6 @@ export async function reorderProductImagesAction(
   imageIds: string[]
 ): Promise<ReorderProductImagesResult> {
 
-  // 1. Mantener restricción de desarrollo.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message:
-        "La administración solo está habilitada en desarrollo local.",
-    };
-  }
 
   // 2. Obtener JWT administrativo.
   const token = await getAdminMutationToken();
@@ -628,14 +603,6 @@ export async function deleteProductImageAction(
   imageId: string
 ): Promise<DeleteProductImageResult> {
 
-  // 1. Mantener restricción de desarrollo.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message:
-        "La administración solo está habilitada en desarrollo local.",
-    };
-  }
 
   // 2. Obtener JWT administrativo.
   const token = await getAdminMutationToken();

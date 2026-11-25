@@ -46,15 +46,6 @@ export async function updateProductAction(
   input: CreateProductInput
 ): Promise<UpdateProductResult> {
 
-  // 1. Mantener la restricción temporal
-  // del panel en desarrollo local.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message:
-        "La administración solo está habilitada en desarrollo local.",
-    };
-  }
 
   // 2. Recuperar JWT desde la cookie HttpOnly.
   const token = await getAdminMutationToken();

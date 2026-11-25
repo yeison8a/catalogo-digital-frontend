@@ -38,15 +38,6 @@ async function updateStatus(
   value: boolean
 ): Promise<ProductStatusResult> {
 
-  // Mantener la restricción actual
-  // del backend de desarrollo local.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message:
-        "La administración solo está habilitada en desarrollo local.",
-    };
-  }
 
   // Recuperar la sesión del administrador.
   const token = await getAdminMutationToken();

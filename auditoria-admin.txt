@@ -1,0 +1,2187 @@
+﻿===== src\lib\auth\admin-session.ts =====
+
+import "server-only";
+
+import { cookies } from "next/headers";
+
+/**
+ * Nombre de la cookie que almacena
+ * temporalmente el JWT administrativo.
+ */
+const ADMIN_SESSION_COOKIE = "admin_session";
+
+/**
+ * Duración máxima permitida:
+ * 15 minutos, igual que el JWT de Spring Boot.
+ */
+const MAX_SESSION_SECONDS = 15 * 60;
+
+/**
+ * Guarda el JWT en una cookie HttpOnly.
+ *
+ * Solo debe llamarse después de que
+ * Spring Boot autentique al administrador.
+ *
+ * Debe ejecutarse dentro de una Server Action
+ * o un Route Handler de Next.js.
+ */
+export async function createAdminSession(
+  accessToken: string,
+  expiresIn: number
+): Promise<void> {
+  if (
+    typeof accessToken !== "string" ||
+    accessToken.trim().length === 0
+  ) {
+    throw new Error("Token de sesión inválido.");
+  }
+
+  if (
+    !Number.isSafeInteger(expiresIn) ||
+    expiresIn <= 0
+  ) {
+    throw new Error("Duración de sesión inválida.");
+  }
+
+  const sessionDuration = Math.min(
+    expiresIn,
+    MAX_SESSION_SECONDS
+  );
+
+  const cookieStore = await cookies();
+
+  cookieStore.set(
+    ADMIN_SESSION_COOKIE,
+    accessToken,
+    {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: sessionDuration,
+      priority: "high",
+    }
+  );
+}
+
+/**
+ * Recupera el JWT de la sesión actual.
+ *
+ * IMPORTANTE:
+ * Leer una cookie NO significa que el JWT
+ * sea válido ni que el usuario esté autorizado.
+ *
+ * Spring Boot deberá validar el JWT antes
+ * de permitir cualquier operación administrativa.
+ */
+export async function getAdminSessionToken():
+  Promise<string | null> {
+  const cookieStore = await cookies();
+
+  const token = cookieStore.get(
+    ADMIN_SESSION_COOKIE
+  )?.value;
+
+  if (!token || token.trim().length === 0) {
+    return null;
+  }
+
+  return token;
+}
+
+/**
+ * Elimina la cookie de sesión.
+ *
+ * Debe ejecutarse desde una Server Action
+ * o un Route Handler de Next.js.
+ */
+export async function deleteAdminSession():
+  Promise<void> {
+  const cookieStore = await cookies();
+
+  cookieStore.delete(ADMIN_SESSION_COOKIE);
+}
+===== src\lib\auth\admin-mutation-token.ts =====
+
+import "server-only";
+
+import {
+  getAdminSessionToken,
+} from "@/lib/auth/admin-session";
+
+/**
+ * Recupera el JWT administrativo almacenado
+ * en la cookie HttpOnly.
+ *
+ * Esta función se utiliza exclusivamente
+ * desde las Server Actions de Next.js.
+ *
+ * No expone el token al navegador.
+ */
+export async function getAdminMutationToken():
+  Promise<string | null> {
+
+  const token = await getAdminSessionToken();
+
+  if (!token) {
+    return null;
+  }
+
+  return token;
+}
+===== src\lib\auth\require-admin-session.ts =====
+
+import "server-only";
+
+import { redirect } from "next/navigation";
+
+import {
+  getAdminSessionToken,
+} from "@/lib/auth/admin-session";
+
+const API_BASE_URL = (
+  process.env.API_BASE_URL ??
+  "http://127.0.0.1:8080/api/v1"
+).replace(/\/+$/, "");
+
+/**
+ * Redirige al login cuando Spring Boot
+ * rechaza la autenticación o autorización.
+ *
+ * Puede reutilizarse desde clientes HTTP
+ * ejecutados exclusivamente en el servidor.
+ */
+export function redirectIfAdminUnauthorized(
+  status: number
+): void {
+  if (status === 401 || status === 403) {
+    redirect("/admin/login");
+  }
+}
+
+/**
+ * Verifica que el administrador tenga
+ * una sesión válida y autorizada.
+ *
+ * Si falta la cookie o Spring Boot rechaza
+ * el JWT, redirige a /admin/login.
+ *
+ * Los errores de conexión o los errores 5xx
+ * no se confunden con sesiones vencidas.
+ */
+export async function requireAdminSession():
+  Promise<void> {
+
+  // Recuperar JWT desde la cookie HttpOnly.
+  const token = await getAdminSessionToken();
+
+  // No existe una sesión administrativa.
+  if (!token) {
+    redirect("/admin/login");
+  }
+
+  // Consultar un endpoint protegido.
+  const response = await fetch(
+    `${API_BASE_URL}/admin/products`,
+    {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(10000),
+    }
+  );
+
+  // Rechazar JWT inválido, vencido o sin permisos.
+  redirectIfAdminUnauthorized(response.status);
+
+  // No ocultar problemas reales del backend.
+  if (!response.ok) {
+    throw new Error(
+      "No fue posible verificar la sesión administrativa."
+    );
+  }
+}
+===== src\app\(admin)\admin\products\actions.ts =====
+
+"use server";
+
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
+const API_BASE_URL =
+  process.env.API_BASE_URL ??
+  "http://127.0.0.1:8080/api/v1";
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+export type ProductStatusResult =
+  | { success: true }
+  | { success: false; message: string };
+
+type StatusField = "active" | "available";
+
+interface ProductStatusResponse {
+  id: string;
+  active: boolean;
+  available: boolean;
+}
+
+/**
+ * Función interna para actualizar un estado.
+ *
+ * No se exporta como Server Action.
+ *
+ * Exige JWT antes de realizar cualquier
+ * modificación en Spring Boot.
+ */
+async function updateStatus(
+  productId: string,
+  field: StatusField,
+  value: boolean
+): Promise<ProductStatusResult> {
+
+  // Mantener la restricción actual
+  // del backend de desarrollo local.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  // Recuperar la sesión del administrador.
+  const token = await getAdminMutationToken();
+
+  // No permitir modificaciones sin sesión.
+  if (!token) {
+    return {
+      success: false,
+      message:
+        "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.",
+    };
+  }
+
+  // Validar identificador.
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message: "El identificador del producto no es válido.",
+    };
+  }
+
+  // Validar estado.
+  if (typeof value !== "boolean") {
+    return {
+      success: false,
+      message: "El estado enviado no es válido.",
+    };
+  }
+
+  const endpoint =
+    field === "active"
+      ? "publication"
+      : "availability";
+
+  try {
+    // Enviar la modificación autenticada
+    // al backend Spring Boot.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}/${endpoint}`,
+      {
+        method: "PATCH",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          [field]: value,
+        }),
+      }
+    );
+
+    // Sesión vencida o token rechazado.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message:
+          "Tu sesión no está autorizada. Inicia sesión nuevamente.",
+      };
+    }
+
+    // Producto inexistente.
+    if (response.status === 404) {
+      return {
+        success: false,
+        message: "El producto ya no existe.",
+      };
+    }
+
+    // Solicitud inválida.
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó el cambio solicitado.",
+      };
+    }
+
+    // Conflicto con las reglas del backend.
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No se puede realizar el cambio debido a una restricción del backend.",
+      };
+    }
+
+    if (!response.ok) {
+      console.error(
+        "Error actualizando estado:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible actualizar el estado del producto.",
+      };
+    }
+
+    // Confirmar que el backend devolvió
+    // el estado solicitado.
+    const updated: ProductStatusResponse =
+      await response.json();
+
+    if (
+      updated.id.toLowerCase() !==
+        productId.toLowerCase() ||
+      updated[field] !== value
+    ) {
+      return {
+        success: false,
+        message:
+          "No se pudo confirmar el estado actualizado. Recarga la página antes de reintentar.",
+      };
+    }
+
+    return { success: true };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión con Spring Boot:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo completar la operación. Comprueba el estado del producto antes de reintentar.",
+    };
+  }
+}
+
+/**
+ * Publicar u ocultar un producto.
+ */
+export async function updateProductPublicationAction(
+  productId: string,
+  active: boolean
+): Promise<ProductStatusResult> {
+
+  return updateStatus(
+    productId,
+    "active",
+    active
+  );
+}
+
+/**
+ * Marcar un producto como disponible
+ * o agotado.
+ */
+export async function updateProductAvailabilityAction(
+  productId: string,
+  available: boolean
+): Promise<ProductStatusResult> {
+
+  return updateStatus(
+    productId,
+    "available",
+    available
+  );
+}
+===== src\app\(admin)\admin\products\new\actions.ts =====
+
+"use server";
+
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
+const API_BASE_URL =
+  process.env.API_BASE_URL ??
+  "http://127.0.0.1:8080/api/v1";
+
+/**
+ * Datos que acepta ProductRequest
+ * en Spring Boot.
+ */
+export interface CreateProductInput {
+  name: string;
+  description: string;
+  price: number;
+  categoryId: string;
+}
+
+/**
+ * Resultado de la creación.
+ */
+export type CreateProductResult =
+  | {
+      success: true;
+      productId: string;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Crea un producto real mediante Spring Boot.
+ *
+ * Flujo:
+ * 1. Comprobar el entorno.
+ * 2. Recuperar el JWT de la cookie HttpOnly.
+ * 3. Validar los datos recibidos.
+ * 4. Enviar la petición autenticada.
+ * 5. Confirmar el UUID generado.
+ *
+ * Spring Boot valida el JWT, el rol ADMIN
+ * y el estado del administrador.
+ */
+export async function createProductAction(
+  input: CreateProductInput
+): Promise<CreateProductResult> {
+
+  // 1. Conservar la restricción temporal
+  // del entorno de desarrollo local.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  // 2. Recuperar el JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  // Rechazar operaciones sin sesión.
+  if (!token) {
+    return {
+      success: false,
+      message:
+        "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.",
+    };
+  }
+
+  // 3. Validar la estructura de los datos.
+  if (
+    !input ||
+    typeof input.name !== "string" ||
+    typeof input.description !== "string" ||
+    typeof input.price !== "number" ||
+    typeof input.categoryId !== "string"
+  ) {
+    return {
+      success: false,
+      message: "Los datos del producto no son válidos.",
+    };
+  }
+
+  const name = input.name.trim();
+  const description = input.description.trim();
+  const categoryId = input.categoryId;
+
+  // Validar nombre.
+  if (name.length < 2 || name.length > 150) {
+    return {
+      success: false,
+      message:
+        "El nombre debe tener entre 2 y 150 caracteres.",
+    };
+  }
+
+  // Validar descripción.
+  if (description.length > 2000) {
+    return {
+      success: false,
+      message:
+        "La descripción no puede superar los 2000 caracteres.",
+    };
+  }
+
+  // Validar precio en pesos colombianos.
+  if (
+    !Number.isFinite(input.price) ||
+    input.price < 0 ||
+    !Number.isInteger(input.price) ||
+    input.price > 9999999999
+  ) {
+    return {
+      success: false,
+      message:
+        "Ingresa un precio válido en pesos colombianos.",
+    };
+  }
+
+  // Validar identificador de categoría.
+  if (!UUID_REGEX.test(categoryId)) {
+    return {
+      success: false,
+      message:
+        "Selecciona una categoría válida.",
+    };
+  }
+
+  try {
+
+    // 4. Enviar el producto a Spring Boot
+    // utilizando la sesión administrativa.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products`,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          description,
+          price: input.price,
+          categoryId,
+        }),
+      }
+    );
+
+    // Sesión vencida o usuario no autorizado.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message:
+          "Tu sesión no está autorizada. Inicia sesión nuevamente.",
+      };
+    }
+
+    // Categoría inexistente o inválida.
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "La categoría seleccionada no existe.",
+      };
+    }
+
+    // Datos rechazados por Spring Boot.
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó los datos del producto.",
+      };
+    }
+
+    // Conflicto con reglas de negocio.
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No fue posible crear el producto debido a una restricción del backend.",
+      };
+    }
+
+    // Otros errores HTTP.
+    if (!response.ok) {
+      console.error(
+        "Error creando producto:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible guardar el producto.",
+      };
+    }
+
+    // 5. Obtener el UUID real generado
+    // por Spring Boot.
+    const product: unknown = await response.json();
+
+    if (
+      typeof product !== "object" ||
+      product === null ||
+      !("id" in product) ||
+      typeof product.id !== "string" ||
+      !UUID_REGEX.test(product.id)
+    ) {
+      return {
+        success: false,
+        message:
+          "El servidor respondió correctamente, pero no se pudo confirmar el identificador del producto. Consulta el listado antes de reintentar.",
+      };
+    }
+
+    // Producto guardado y confirmado.
+    return {
+      success: true,
+      productId: product.id,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión al crear producto:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo conectar con Spring Boot. Verifica que el backend esté ejecutándose.",
+    };
+  }
+}
+===== src\app\(admin)\admin\products\[id]\edit\actions.ts =====
+
+"use server";
+
+import type {
+  CreateProductInput,
+} from "@/app/(admin)/admin/products/new/actions";
+
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
+const API_BASE_URL =
+  process.env.API_BASE_URL ??
+  "http://127.0.0.1:8080/api/v1";
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resultado de actualizar un producto.
+ */
+export type UpdateProductResult =
+  | {
+      success: true;
+      productId: string;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+/**
+ * Actualiza los datos de un producto existente.
+ *
+ * Spring Boot conserva el UUID original.
+ *
+ * Flujo:
+ * 1. Verificar el entorno permitido.
+ * 2. Recuperar el JWT administrativo.
+ * 3. Validar UUID y datos del producto.
+ * 4. Enviar PUT autenticado a Spring Boot.
+ * 5. Comprobar la respuesta del backend.
+ */
+export async function updateProductAction(
+  productId: string,
+  input: CreateProductInput
+): Promise<UpdateProductResult> {
+
+  // 1. Mantener la restricción temporal
+  // del panel en desarrollo local.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  // 2. Recuperar JWT desde la cookie HttpOnly.
+  const token = await getAdminMutationToken();
+
+  // Impedir operaciones sin sesión.
+  if (!token) {
+    return {
+      success: false,
+      message:
+        "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.",
+    };
+  }
+
+  // 3. Validar identificador del producto.
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador del producto no es válido.",
+    };
+  }
+
+  // Validar estructura del producto.
+  if (
+    !input ||
+    typeof input.name !== "string" ||
+    typeof input.description !== "string" ||
+    typeof input.price !== "number" ||
+    typeof input.categoryId !== "string"
+  ) {
+    return {
+      success: false,
+      message: "Los datos enviados no son válidos.",
+    };
+  }
+
+  const name = input.name.trim();
+  const description = input.description.trim();
+  const categoryId = input.categoryId.trim();
+
+  // Validar nombre.
+  if (name.length < 2 || name.length > 150) {
+    return {
+      success: false,
+      message:
+        "El nombre debe tener entre 2 y 150 caracteres.",
+    };
+  }
+
+  // Validar descripción.
+  if (description.length > 2000) {
+    return {
+      success: false,
+      message:
+        "La descripción no puede superar los 2000 caracteres.",
+    };
+  }
+
+  // Validar precio en pesos colombianos.
+  if (
+    !Number.isFinite(input.price) ||
+    !Number.isInteger(input.price) ||
+    input.price < 0 ||
+    input.price > 9999999999
+  ) {
+    return {
+      success: false,
+      message:
+        "Ingresa un precio válido en pesos colombianos.",
+    };
+  }
+
+  // Validar identificador de categoría.
+  if (!UUID_REGEX.test(categoryId)) {
+    return {
+      success: false,
+      message:
+        "Selecciona una categoría válida.",
+    };
+  }
+
+  try {
+
+    // 4. Enviar la actualización autenticada.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}`,
+      {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          description,
+          price: input.price,
+          categoryId,
+        }),
+      }
+    );
+
+    // JWT vencido, inválido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message:
+          "Tu sesión no está autorizada. Inicia sesión nuevamente.",
+      };
+    }
+
+    // Producto inexistente.
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto ya no existe.",
+      };
+    }
+
+    // Datos rechazados por Spring Boot.
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó los datos del producto.",
+      };
+    }
+
+    // Conflicto con reglas de negocio.
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No se puede actualizar el producto debido a una restricción del backend.",
+      };
+    }
+
+    // Otros errores HTTP.
+    if (!response.ok) {
+      console.error(
+        "Error actualizando producto:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible actualizar el producto.",
+      };
+    }
+
+    // 5. Confirmar la respuesta real del backend.
+    const updatedProduct: unknown =
+      await response.json();
+
+    if (
+      typeof updatedProduct !== "object" ||
+      updatedProduct === null ||
+      !("id" in updatedProduct) ||
+      updatedProduct.id !== productId
+    ) {
+      return {
+        success: false,
+        message:
+          "El backend respondió correctamente, pero no se pudo confirmar el producto actualizado. Verifica el listado antes de reintentar.",
+      };
+    }
+
+    // Actualización confirmada.
+    return {
+      success: true,
+      productId,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión al actualizar producto:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo conectar con Spring Boot.",
+    };
+  }
+}
+===== src\app\(admin)\admin\products\[id]\images\actions.ts =====
+
+"use server";
+
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
+const API_BASE_URL =
+  process.env.API_BASE_URL ??
+  "http://127.0.0.1:8080/api/v1";
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+const ALLOWED_TYPES = [
+  "image/jpeg",
+  "image/png",
+];
+
+const SESSION_REQUIRED_MESSAGE =
+  "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.";
+
+const SESSION_UNAUTHORIZED_MESSAGE =
+  "Tu sesión no está autorizada. Inicia sesión nuevamente.";
+
+/**
+ * Resultado de subir una fotografía.
+ */
+export type UploadProductImageResult =
+  | {
+      success: true;
+      imageId: string;
+      imageUrl: string;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+/**
+ * Valida una respuesta de imagen de Spring Boot.
+ */
+function isImageResponse(
+  value: unknown
+): value is {
+  id: string;
+  imageUrl: string;
+} {
+  if (
+    typeof value !== "object" ||
+    value === null
+  ) {
+    return false;
+  }
+
+  if (
+    !("id" in value) ||
+    !("imageUrl" in value)
+  ) {
+    return false;
+  }
+
+  return (
+    typeof value.id === "string" &&
+    UUID_REGEX.test(value.id) &&
+    typeof value.imageUrl === "string" &&
+    value.imageUrl.startsWith("https://")
+  );
+}
+
+/**
+ * Sube una fotografía real de un producto.
+ *
+ * Flujo:
+ * Next.js -> Spring Boot -> Cloudinary
+ *                         -> PostgreSQL
+ *
+ * La solicitud exige JWT administrativo.
+ */
+export async function uploadProductImageAction(
+  productId: string,
+  formData: FormData
+): Promise<UploadProductImageResult> {
+
+  // 1. Conservar la restricción temporal
+  // del entorno de desarrollo.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  // 2. Recuperar el JWT desde la cookie HttpOnly.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID del producto.
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador del producto no es válido.",
+    };
+  }
+
+  // 4. Validar el contenido recibido.
+  if (!(formData instanceof FormData)) {
+    return {
+      success: false,
+      message:
+        "Debes seleccionar una fotografía válida.",
+    };
+  }
+
+  // Recuperar el campo esperado por Spring Boot.
+  const value = formData.get("file");
+
+  if (!(value instanceof File)) {
+    return {
+      success: false,
+      message:
+        "Debes seleccionar una fotografía válida.",
+    };
+  }
+
+  // No permitir archivos vacíos.
+  if (value.size === 0) {
+    return {
+      success: false,
+      message:
+        "No se permiten archivos vacíos.",
+    };
+  }
+
+  // Validar JPG o PNG.
+  if (!ALLOWED_TYPES.includes(value.type)) {
+    return {
+      success: false,
+      message:
+        "Solo se permiten fotografías JPG o PNG.",
+    };
+  }
+
+  // Validar tamaño máximo de 5 MiB.
+  if (value.size > MAX_FILE_SIZE) {
+    return {
+      success: false,
+      message:
+        "La fotografía supera el límite de 5 MiB.",
+    };
+  }
+
+  try {
+
+    // 5. Preparar multipart/form-data.
+    const uploadData = new FormData();
+
+    uploadData.append(
+      "file",
+      value,
+      value.name
+    );
+
+    // 6. Enviar fotografía a Spring Boot
+    // con autorización JWT.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}/images/upload`,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: uploadData,
+      }
+    );
+
+    // No agregar Content-Type manualmente:
+    // fetch genera el boundary de multipart.
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
+
+    // Producto inexistente.
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto no existe en PostgreSQL.",
+      };
+    }
+
+    // Archivo inválido.
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó la fotografía. Comprueba que sea JPG o PNG.",
+      };
+    }
+
+    // Límite de cinco fotografías.
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "El producto ya tiene el máximo de cinco fotografías.",
+      };
+    }
+
+    // Límite de tamaño.
+    if (response.status === 413) {
+      return {
+        success: false,
+        message:
+          "La fotografía supera el tamaño permitido por el servidor.",
+      };
+    }
+
+    if (!response.ok) {
+      console.error(
+        "Error HTTP al subir fotografía:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible guardar la fotografía.",
+      };
+    }
+
+    // 7. Confirmar la respuesta de Spring Boot.
+    const image: unknown = await response.json();
+
+    if (!isImageResponse(image)) {
+      return {
+        success: false,
+        message:
+          "El servidor aceptó la fotografía, pero no se pudo confirmar su información. Revisa las imágenes del producto antes de intentar subirla nuevamente.",
+      };
+    }
+
+    return {
+      success: true,
+      imageId: image.id,
+      imageUrl: image.imageUrl,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error enviando fotografía a Spring Boot:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo completar la carga. Verifica las fotografías existentes antes de reintentar.",
+    };
+  }
+}
+
+/**
+ * Resultado de seleccionar una fotografía principal.
+ */
+export type SetMainProductImageResult =
+  | {
+      success: true;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+/**
+ * Establece una fotografía almacenada como
+ * imagen principal de un producto.
+ *
+ * Next.js -> Spring Boot -> PostgreSQL.
+ */
+export async function setMainProductImageAction(
+  productId: string,
+  imageId: string
+): Promise<SetMainProductImageResult> {
+
+  // 1. Mantener restricción de desarrollo.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  // 2. Obtener JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID del producto.
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador del producto no es válido.",
+    };
+  }
+
+  // 4. Validar UUID de la fotografía.
+  if (
+    typeof imageId !== "string" ||
+    !UUID_REGEX.test(imageId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador de la fotografía no es válido.",
+    };
+  }
+
+  try {
+
+    // 5. Enviar PUT autenticado.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}/images/${imageId}/main`,
+      {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
+
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto o la fotografía ya no existe.",
+      };
+    }
+
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó la fotografía seleccionada.",
+      };
+    }
+
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No es posible seleccionar esta fotografía debido a una restricción del backend.",
+      };
+    }
+
+    if (!response.ok) {
+      console.error(
+        "Error al cambiar la imagen principal:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible cambiar la imagen principal.",
+      };
+    }
+
+    // El backend confirmó una respuesta exitosa.
+    // La interfaz volverá a consultar PostgreSQL.
+    return {
+      success: true,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión al cambiar la imagen principal:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo confirmar el cambio. Verifica cuál fotografía es principal antes de reintentar.",
+    };
+  }
+}
+
+/**
+ * Resultado de ordenar las fotografías.
+ */
+export type ReorderProductImagesResult =
+  | {
+      success: true;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+/**
+ * Guarda el nuevo orden de las fotografías
+ * mediante Spring Boot y PostgreSQL.
+ *
+ * imageIds debe contener todos los UUID
+ * de las fotografías en el orden deseado.
+ */
+export async function reorderProductImagesAction(
+  productId: string,
+  imageIds: string[]
+): Promise<ReorderProductImagesResult> {
+
+  // 1. Mantener restricción de desarrollo.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  // 2. Obtener JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID del producto.
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador del producto no es válido.",
+    };
+  }
+
+  // 4. Validar lista de imágenes.
+  if (
+    !Array.isArray(imageIds) ||
+    imageIds.length < 1 ||
+    imageIds.length > 5 ||
+    !imageIds.every(
+      (id) =>
+        typeof id === "string" &&
+        UUID_REGEX.test(id)
+    )
+  ) {
+    return {
+      success: false,
+      message:
+        "La lista de fotografías no es válida.",
+    };
+  }
+
+  // No permitir UUID repetidos.
+  if (
+    new Set(imageIds).size !== imageIds.length
+  ) {
+    return {
+      success: false,
+      message:
+        "La lista contiene fotografías repetidas.",
+    };
+  }
+
+  try {
+
+    // 5. Enviar PUT autenticado.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}/images/order`,
+      {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          imageIds,
+        }),
+      }
+    );
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
+
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto o alguna fotografía no existe.",
+      };
+    }
+
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó el orden. Comprueba que se incluyan todas las fotografías del producto.",
+      };
+    }
+
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No se pudo cambiar el orden por una restricción del backend.",
+      };
+    }
+
+    if (!response.ok) {
+      console.error(
+        "Error HTTP al ordenar fotografías:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible guardar el nuevo orden.",
+      };
+    }
+
+    // El backend confirmó que la operación
+    // se completó correctamente.
+    return {
+      success: true,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión al ordenar fotografías:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo confirmar el orden. Recarga la página y comprueba las fotografías antes de reintentar.",
+    };
+  }
+}
+
+/**
+ * Resultado de solicitar la eliminación
+ * de una fotografía.
+ */
+export type DeleteProductImageResult =
+  | {
+      success: true;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+/**
+ * Solicita a Spring Boot la eliminación
+ * de una fotografía almacenada.
+ *
+ * El backend gestiona el procesamiento
+ * diferido de Cloudinary.
+ */
+export async function deleteProductImageAction(
+  productId: string,
+  imageId: string
+): Promise<DeleteProductImageResult> {
+
+  // 1. Mantener restricción de desarrollo.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message:
+        "La administración solo está habilitada en desarrollo local.",
+    };
+  }
+
+  // 2. Obtener JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID del producto.
+  if (
+    typeof productId !== "string" ||
+    !UUID_REGEX.test(productId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador del producto no es válido.",
+    };
+  }
+
+  // 4. Validar UUID de la fotografía.
+  if (
+    typeof imageId !== "string" ||
+    !UUID_REGEX.test(imageId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador de la fotografía no es válido.",
+    };
+  }
+
+  try {
+
+    // 5. Enviar DELETE autenticado.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/products/${productId}/images/${imageId}`,
+      {
+        method: "DELETE",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
+
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "El producto o la fotografía ya no existe. Recarga la página.",
+      };
+    }
+
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Spring Boot rechazó la solicitud de eliminación.",
+      };
+    }
+
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No se puede eliminar la fotografía debido a una restricción del backend.",
+      };
+    }
+
+    if (!response.ok) {
+      console.error(
+        "Error HTTP al eliminar fotografía:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible solicitar la eliminación de la fotografía.",
+      };
+    }
+
+    // HTTP 202 significa que la solicitud fue
+    // aceptada para su procesamiento.
+    //
+    // No significa que Cloudinary haya completado
+    // el borrado físico de la fotografía.
+    return {
+      success: true,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error solicitando eliminación:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo confirmar la eliminación. Comprueba las fotografías del producto antes de reintentar.",
+    };
+  }
+}
+===== src\app\(admin)\admin\categories\actions.ts =====
+
+"use server";
+
+import {
+  getAdminMutationToken,
+} from "@/lib/auth/admin-mutation-token";
+
+const API_BASE_URL =
+  process.env.API_BASE_URL ??
+  "http://127.0.0.1:8080/api/v1";
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const SESSION_REQUIRED_MESSAGE =
+  "Tu sesión ha vencido o no has iniciado sesión. Ingresa nuevamente.";
+
+const SESSION_UNAUTHORIZED_MESSAGE =
+  "Tu sesión no está autorizada. Inicia sesión nuevamente.";
+
+const LOCAL_ONLY_MESSAGE =
+  "La administración solo está habilitada en desarrollo local.";
+
+/**
+ * Resultado de crear una categoría.
+ */
+export type CreateCategoryResult =
+  | { success: true }
+  | { success: false; message: string };
+
+/**
+ * Crea una categoría real en PostgreSQL
+ * mediante Spring Boot.
+ *
+ * Flujo:
+ * 1. Comprobar el entorno.
+ * 2. Recuperar el JWT administrativo.
+ * 3. Validar el nombre.
+ * 4. Realizar POST autenticado.
+ * 5. Comprobar la respuesta del backend.
+ */
+export async function createCategoryAction(
+  name: string
+): Promise<CreateCategoryResult> {
+
+  // 1. Mantener la restricción temporal
+  // del entorno de desarrollo local.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message: LOCAL_ONLY_MESSAGE,
+    };
+  }
+
+  // 2. Recuperar el JWT desde la cookie HttpOnly.
+  const token = await getAdminMutationToken();
+
+  // Impedir solicitudes sin sesión.
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar el tipo del nombre recibido.
+  if (typeof name !== "string") {
+    return {
+      success: false,
+      message:
+        "El nombre de la categoría no es válido.",
+    };
+  }
+
+  const cleanName = name.trim();
+
+  // Validar longitud del nombre.
+  if (
+    cleanName.length < 2 ||
+    cleanName.length > 100
+  ) {
+    return {
+      success: false,
+      message:
+        "El nombre debe tener entre 2 y 100 caracteres.",
+    };
+  }
+
+  try {
+
+    // 4. Crear la categoría con JWT.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/categories`,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: cleanName,
+        }),
+      }
+    );
+
+    // Sesión vencida, inválida o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
+
+    // Categoría duplicada.
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "Ya existe una categoría con ese nombre.",
+      };
+    }
+
+    // Nombre rechazado por el backend.
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "El nombre de la categoría no cumple las validaciones.",
+      };
+    }
+
+    // Otros errores HTTP.
+    if (!response.ok) {
+      console.error(
+        "Error creando categoría:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible crear la categoría. Inténtalo nuevamente.",
+      };
+    }
+
+    // Categoría creada correctamente.
+    return {
+      success: true,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión al crear categoría:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo conectar con Spring Boot. Verifica que esté ejecutándose.",
+    };
+  }
+}
+
+/**
+ * Resultado de actualizar una categoría.
+ */
+export type UpdateCategoryResult =
+  | { success: true }
+  | { success: false; message: string };
+
+/**
+ * Actualiza el nombre de una categoría
+ * existente en PostgreSQL.
+ *
+ * Requiere una sesión administrativa.
+ */
+export async function updateCategoryAction(
+  categoryId: string,
+  name: string
+): Promise<UpdateCategoryResult> {
+
+  // 1. Mantener restricción temporal.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message: LOCAL_ONLY_MESSAGE,
+    };
+  }
+
+  // 2. Recuperar JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID de la categoría.
+  if (
+    typeof categoryId !== "string" ||
+    !UUID_REGEX.test(categoryId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador de la categoría no es válido.",
+    };
+  }
+
+  // 4. Validar tipo del nombre.
+  if (typeof name !== "string") {
+    return {
+      success: false,
+      message:
+        "El nombre de la categoría no es válido.",
+    };
+  }
+
+  const cleanName = name.trim();
+
+  // Validar longitud.
+  if (
+    cleanName.length < 2 ||
+    cleanName.length > 100
+  ) {
+    return {
+      success: false,
+      message:
+        "El nombre debe tener entre 2 y 100 caracteres.",
+    };
+  }
+
+  try {
+
+    // 5. Enviar PUT autenticado.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/categories/${categoryId}`,
+      {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: cleanName,
+        }),
+      }
+    );
+
+    // JWT rechazado.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
+
+    // Categoría inexistente.
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "La categoría ya no existe.",
+      };
+    }
+
+    // Nombre duplicado.
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "Ya existe otra categoría con ese nombre.",
+      };
+    }
+
+    // Datos inválidos.
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "Los datos enviados no cumplen las validaciones del backend.",
+      };
+    }
+
+    // Otros errores HTTP.
+    if (!response.ok) {
+      console.error(
+        "Error actualizando categoría:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible actualizar la categoría.",
+      };
+    }
+
+    // Actualización completada.
+    return {
+      success: true,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión al actualizar categoría:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo conectar con Spring Boot.",
+    };
+  }
+}
+
+/**
+ * Resultado de modificar el estado de una categoría.
+ */
+export type UpdateCategoryStatusResult =
+  | { success: true }
+  | { success: false; message: string };
+
+/**
+ * Activa o desactiva una categoría en PostgreSQL
+ * mediante Spring Boot.
+ *
+ * Requiere JWT administrativo.
+ */
+export async function updateCategoryStatusAction(
+  categoryId: string,
+  active: boolean
+): Promise<UpdateCategoryStatusResult> {
+
+  // 1. Mantener la restricción temporal.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      success: false,
+      message: LOCAL_ONLY_MESSAGE,
+    };
+  }
+
+  // 2. Recuperar el JWT administrativo.
+  const token = await getAdminMutationToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: SESSION_REQUIRED_MESSAGE,
+    };
+  }
+
+  // 3. Validar UUID de la categoría.
+  if (
+    typeof categoryId !== "string" ||
+    !UUID_REGEX.test(categoryId)
+  ) {
+    return {
+      success: false,
+      message:
+        "El identificador de la categoría no es válido.",
+    };
+  }
+
+  // 4. Validar el valor recibido.
+  if (typeof active !== "boolean") {
+    return {
+      success: false,
+      message:
+        "El estado enviado no es válido.",
+    };
+  }
+
+  try {
+
+    // 5. Enviar PATCH autenticado.
+    const response = await fetch(
+      `${API_BASE_URL}/admin/categories/${categoryId}/status`,
+      {
+        method: "PATCH",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          active,
+        }),
+      }
+    );
+
+    // JWT inválido, vencido o sin permisos.
+    if (
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      return {
+        success: false,
+        message: SESSION_UNAUTHORIZED_MESSAGE,
+      };
+    }
+
+    // Categoría inexistente.
+    if (response.status === 404) {
+      return {
+        success: false,
+        message:
+          "La categoría ya no existe.",
+      };
+    }
+
+    // Restricción del backend.
+    if (response.status === 409) {
+      return {
+        success: false,
+        message:
+          "No se puede cambiar el estado de esta categoría. " +
+          "Verifica si tiene productos publicados.",
+      };
+    }
+
+    // Datos rechazados.
+    if (response.status === 400) {
+      return {
+        success: false,
+        message:
+          "El backend rechazó el cambio de estado.",
+      };
+    }
+
+    // Otros errores HTTP.
+    if (!response.ok) {
+      console.error(
+        "Error al cambiar el estado de la categoría:",
+        response.status
+      );
+
+      return {
+        success: false,
+        message:
+          "No fue posible modificar el estado de la categoría.",
+      };
+    }
+
+    // 6. Confirmar la respuesta real de Spring Boot.
+    const updatedCategory: {
+      id: string;
+      name: string;
+      active: boolean;
+    } = await response.json();
+
+    // Validar que Spring Boot haya guardado
+    // exactamente el estado solicitado.
+    if (
+      updatedCategory.id !== categoryId ||
+      updatedCategory.active !== active
+    ) {
+      return {
+        success: false,
+        message:
+          "El backend no confirmó el estado solicitado. " +
+          "Actualiza la página y verifica la categoría.",
+      };
+    }
+
+    return {
+      success: true,
+    };
+
+  } catch (error) {
+    console.error(
+      "Error de conexión al modificar categoría:",
+      error
+    );
+
+    return {
+      success: false,
+      message:
+        "No se pudo conectar con Spring Boot. " +
+        "Verifica que esté ejecutándose.",
+    };
+  }
+}

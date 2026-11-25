@@ -18,8 +18,6 @@ const SESSION_REQUIRED_MESSAGE =
 const SESSION_UNAUTHORIZED_MESSAGE =
   "Tu sesión no está autorizada. Inicia sesión nuevamente.";
 
-const LOCAL_ONLY_MESSAGE =
-  "La administración solo está habilitada en desarrollo local.";
 
 /**
  * Resultado de crear una categoría.
@@ -43,14 +41,6 @@ export async function createCategoryAction(
   name: string
 ): Promise<CreateCategoryResult> {
 
-  // 1. Mantener la restricción temporal
-  // del entorno de desarrollo local.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message: LOCAL_ONLY_MESSAGE,
-    };
-  }
 
   // 2. Recuperar el JWT desde la cookie HttpOnly.
   const token = await getAdminMutationToken();
@@ -185,13 +175,6 @@ export async function updateCategoryAction(
   name: string
 ): Promise<UpdateCategoryResult> {
 
-  // 1. Mantener restricción temporal.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message: LOCAL_ONLY_MESSAGE,
-    };
-  }
 
   // 2. Recuperar JWT administrativo.
   const token = await getAdminMutationToken();
@@ -346,13 +329,6 @@ export async function updateCategoryStatusAction(
   active: boolean
 ): Promise<UpdateCategoryStatusResult> {
 
-  // 1. Mantener la restricción temporal.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message: LOCAL_ONLY_MESSAGE,
-    };
-  }
 
   // 2. Recuperar el JWT administrativo.
   const token = await getAdminMutationToken();

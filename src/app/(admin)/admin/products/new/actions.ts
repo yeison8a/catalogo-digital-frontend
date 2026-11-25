@@ -53,15 +53,6 @@ export async function createProductAction(
   input: CreateProductInput
 ): Promise<CreateProductResult> {
 
-  // 1. Conservar la restricción temporal
-  // del entorno de desarrollo local.
-  if (process.env.NODE_ENV !== "development") {
-    return {
-      success: false,
-      message:
-        "La administración solo está habilitada en desarrollo local.",
-    };
-  }
 
   // 2. Recuperar el JWT administrativo.
   const token = await getAdminMutationToken();
