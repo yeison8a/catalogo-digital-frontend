@@ -1,6 +1,8 @@
 
 "use server";
 
+import { redirect } from "next/navigation";
+
 import {
   authenticateAdmin,
   AdminLoginError,
@@ -11,10 +13,10 @@ import {
 } from "@/lib/auth/admin-session";
 
 /**
- * Estado que posteriormente utilizará
- * el formulario con useActionState.
+ * Estado utilizado por el formulario
+ * de autenticación con useActionState.
  *
- * Nunca incluye contraseñas ni JWT.
+ * Nunca contiene contraseñas ni JWT.
  */
 type LoginActionState = {
   status: "idle" | "success" | "error";
@@ -23,21 +25,26 @@ type LoginActionState = {
 
 /**
  * Autentica al administrador y crea
- * su sesión mediante una cookie HttpOnly.
+ * una sesión mediante una cookie HttpOnly.
  *
- * Solo retorna información segura
- * para mostrar en el navegador.
+ * Si las credenciales son válidas:
+ * 1. Spring Boot devuelve un JWT.
+ * 2. Next.js crea la cookie de sesión.
+ * 3. Next.js redirige directamente a /admin.
+ *
+ * Si ocurre un error, devuelve un mensaje
+ * seguro al formulario.
  */
 export async function loginAdminAction(
   _previousState: LoginActionState,
   formData: FormData
 ): Promise<LoginActionState> {
 
+  // 1. Recuperar los datos enviados.
   const emailValue = formData.get("email");
   const passwordValue = formData.get("password");
 
-  // No confiamos en los datos enviados
-  // desde el navegador.
+  // 2. Validar los tipos de datos.
   if (
     typeof emailValue !== "string" ||
     typeof passwordValue !== "string"
@@ -51,7 +58,7 @@ export async function loginAdminAction(
   const email = emailValue.trim().toLowerCase();
   const password = passwordValue;
 
-  // Validación básica del lado del servidor.
+  // 3. Validación básica del servidor.
   if (
     !email ||
     !password ||
@@ -67,9 +74,8 @@ export async function loginAdminAction(
   let accessToken: string;
   let expiresIn: number;
 
+  // 4. Autenticar contra Spring Boot.
   try {
-    // Spring Boot verifica la contraseña,
-    // el rol ADMIN y el estado del usuario.
     const result = await authenticateAdmin(
       email,
       password
@@ -80,7 +86,7 @@ export async function loginAdminAction(
 
   } catch (error) {
 
-    // No revelar si el correo existe.
+    // No revelar si existe el correo.
     if (error instanceof AdminLoginError) {
       return {
         status: "error",
@@ -88,7 +94,7 @@ export async function loginAdminAction(
       };
     }
 
-    // No mostrar errores internos del servidor.
+    // No revelar detalles internos.
     return {
       status: "error",
       message:
@@ -96,17 +102,19 @@ export async function loginAdminAction(
     };
   }
 
-  // Solo se ejecuta cuando Spring Boot
-  // ha confirmado la autenticación.
+  // 5. Crear la sesión mediante cookie HttpOnly.
+  //
+  // Esta operación solo ocurre después
+  // de validar las credenciales.
   await createAdminSession(
     accessToken,
     expiresIn
   );
 
-  // El JWT NO forma parte de la respuesta
-  // enviada al componente del navegador.
-  return {
-    status: "success",
-    message: "Inicio de sesión correcto.",
-  };
+  // 6. Redirigir directamente desde el servidor.
+  //
+  // IMPORTANTE:
+  // redirect() debe estar fuera del try/catch.
+  // No debemos capturar su excepción interna.
+  redirect("/admin");
 }

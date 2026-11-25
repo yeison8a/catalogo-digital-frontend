@@ -1,8 +1,7 @@
 
 "use client";
 
-import { useActionState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useActionState } from "react";
 import Link from "next/link";
 
 import { loginAdminAction } from "@/lib/auth/admin-login-actions";
@@ -17,25 +16,13 @@ const initialState: LoginState = {
 };
 
 export default function LoginForm() {
-  const router = useRouter();
-
   const [state, formAction, isPending] = useActionState(
     loginAdminAction,
     initialState
   );
 
-  // El backend ya verificó las credenciales
-  // y la Server Action creó la cookie.
-  useEffect(() => {
-    if (state.status === "success") {
-      router.replace("/admin");
-      router.refresh();
-    }
-  }, [state.status, router]);
-
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/60 sm:p-8">
-
       {/* Identidad del panel */}
       <div className="mb-8">
         <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-white">
@@ -66,9 +53,8 @@ export default function LoginForm() {
         </p>
       </div>
 
-      {/* Formulario conectado a Next.js */}
+      {/* Formulario conectado a la Server Action */}
       <form action={formAction} className="space-y-5">
-
         <div>
           <label
             htmlFor="email"
@@ -111,7 +97,7 @@ export default function LoginForm() {
           />
         </div>
 
-        {/* Mensajes de autenticación */}
+        {/* Errores de autenticación */}
         {state.status === "error" && (
           <div
             role="alert"
@@ -121,27 +107,15 @@ export default function LoginForm() {
           </div>
         )}
 
-        {state.status === "success" && (
-          <div
-            role="status"
-            className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700"
-          >
-            Inicio de sesión correcto. Redirigiendo...
-          </div>
-        )}
-
         <button
           type="submit"
-          disabled={isPending || state.status === "success"}
+          disabled={isPending}
           className="flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isPending
             ? "Verificando credenciales..."
-            : state.status === "success"
-              ? "Ingresando..."
-              : "Iniciar sesión"}
+            : "Iniciar sesión"}
         </button>
-
       </form>
 
       <div className="mt-6 border-t border-slate-100 pt-5">
@@ -158,7 +132,6 @@ export default function LoginForm() {
           </Link>
         </div>
       </div>
-
     </div>
   );
 }
